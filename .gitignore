@@ -1,0 +1,25 @@
+﻿# --- Build outputs ---
+build/
+**/build/
+.gradle/
+out/
+bin/
+
+# --- IDE / project metadata ---
+.idea/
+.vscode/
+*.iml
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Debug/binaries (avoid >100MB) ---
+*.pdb
+*.exe
+*.dll
+
+# --- WPILib/FRC notes ---
+# Keep vendordeps JSONs tracked!
+# Ignore volatile WPILib state:
+.wpilib/active.json
