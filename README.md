@@ -45,7 +45,7 @@ preseason-2025/
 ├─ gradlew / gradlew.bat / gradle/
 └─ README.md
 
-````
+
 
 ---
 
@@ -71,7 +71,6 @@ preseason-2025/
    ```bash
    ./gradlew build
    ./gradlew deploy
-````
 
 5. **Driver Station:** Enable & test in a safe space (bumpers on, blocks up).
 
