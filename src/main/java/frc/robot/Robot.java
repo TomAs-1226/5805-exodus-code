@@ -10,7 +10,6 @@ import frc.robot.subsystem.drive.SwerveDrivetrain;
 import frc.robot.subsystem.elevator.Elevator;
 import frc.robot.subsystem.ClimberSubsystem;
 
-import frc.robot.vision.LimelightHelpers;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
@@ -28,6 +27,9 @@ import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
 // Pigeon2 for yaw (heading hold)
 import com.ctre.phoenix6.hardware.Pigeon2;
 
+// Background AI assists (no auto-align)
+import frc.robot.ai.AiBackground;
+
 public class Robot extends TimedRobot {
 
   private final CommandSystem COMSYS;
@@ -37,7 +39,7 @@ public class Robot extends TimedRobot {
 
   private static final PS5Controller CONTROLLER = new PS5Controller(0);
   private boolean foc = true;
-  private boolean autoaim = false;
+  private boolean autoaim = false; // kept but not used (no auto-align yet)
 
   // ===== Driver feel =====
   private static final double TRANS_DEADBAND = 0.05;
@@ -94,7 +96,7 @@ public class Robot extends TimedRobot {
   private static final double DEFAULT_MOVE_CMD             = 0.35;  // forward command (0..1). Sign sets forward direction.
   private static final double DEFAULT_RAISE_DELAY_S        = 0.25;  // used by L3
 
-  private static final double DEFAULT_TARGET_DIST_L2_IN    = 40.0;  
+  private static final double DEFAULT_TARGET_DIST_L2_IN    = 40.0;
   private static final double DEFAULT_BACKOFF_L2_IN        = 7.0;
 
   private static final double DEFAULT_TARGET_DIST_L3_IN    = 80.0;
@@ -136,10 +138,22 @@ public class Robot extends TimedRobot {
   private final PIDController headingPid = new PIDController(HEAD_KP, HEAD_KI, HEAD_KD);
   private double headingTargetDeg = 0.0;
   private boolean headingLocked = false;
-  private final Pigeon2 IMU = new Pigeon2(Constants.Device.PIGEON_2.ID);
+
+  // >>> IMPORTANT: set the CAN bus string for CANivore <<<
+  // You can use "*" for “any CANivore” or the exact name you set in Tuner X.
+  private static final String PIGEON_CANBUS = "*"; // e.g. "canivore" or "*"
+
+  private final Pigeon2 IMU = new Pigeon2(Constants.Device.PIGEON_2.ID, PIGEON_CANBUS);
+
+  // Background AI helper (no auto-align)
+  private final AiBackground AIBG = new AiBackground(
+      () -> IMU.getYaw().getValueAsDouble(),
+      () -> IMU.getAngularVelocityZWorld().getValueAsDouble(),
+      () -> IMU.getPitch().getValueAsDouble()
+  );
 
   private void headingHoldStart() {
-    headingTargetDeg = IMU.getYaw().getValueAsDouble(); // degrees
+    headingTargetDeg = IMU.getYaw().getValueAsDouble(); // degrees (CCW+)
     headingPid.reset();
     headingPid.enableContinuousInput(-180.0, 180.0);
     headingLocked = true;
@@ -221,6 +235,9 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("Auto/LeaveDistIn",    DEFAULT_LEAVE_DIST_IN);
 
     SmartDashboard.putNumber("Auto/OdomYIn", 0.0);
+
+    // AI defaults
+    AIBG.initTunableDefaults();
   }
 
   @Override public void robotPeriodic() { SubsystemManager.update(); }
@@ -285,7 +302,7 @@ public class Robot extends TimedRobot {
         runScore_Lx(Constants.ELEVATOR_HEIGHTS[3], getTargetL3In(), L3_TOL_IN, L3_RAISE_TIMEOUT_S);
         break;
       case "score_l4_safe":
-        runScore_L4_Safe();  // << updated sequence you requested
+        runScore_L4_Safe();  // updated sequence
         break;
       default:
         DRIVETRAIN.stop();
@@ -481,6 +498,9 @@ public class Robot extends TimedRobot {
         DRIVETRAIN.stop();
         break;
       }
+      default: {
+        throw new RuntimeException("uh oh"); //pray
+      }
     }
   }
 
@@ -609,6 +629,9 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("Climb/ManualJogInMult",   DEFAULT_MANUAL_JOG_IN_MULT);
 
     SmartDashboard.putNumber("Climb/HTogglePercent",    DEFAULT_H_TOGGLE_PERCENT);
+
+    // reset AiBackground temporal state
+    AIBG.onTeleopInit();
   }
 
   @Override
@@ -634,7 +657,7 @@ public class Robot extends TimedRobot {
       if (!ELEVATOR.inAlgaeMode()) ELEVATOR.ejectCoral();
       else ELEVATOR.setEjection(!ELEVATOR.isEjecting());
     }
-    if (CONTROLLER.getPSButtonPressed()) autoaim = !autoaim;
+    if (CONTROLLER.getPSButtonPressed()) autoaim = !autoaim; // no-op for now
     if (CONTROLLER.getL2ButtonPressed()) ELEVATOR.setAlgaeMode(!ELEVATOR.inAlgaeMode());
     if (CONTROLLER.getTouchpadButtonPressed()) DRIVETRAIN.zeroGyro();
 
@@ -651,8 +674,15 @@ public class Robot extends TimedRobot {
     yCmd   = yLimiter.calculate(yCmd);
     rotCmd = rotLimiter.calculate(rotCmd) * ROT_GAIN;
 
-    double finalOmega = autoaim ? LimelightHelpers.getTX("") : rotCmd;
-    DRIVETRAIN.drive(xCmd, yCmd, finalOmega, foc);
+    boolean driverTurning     = Math.abs(rotCmd) > SmartDashboard.getNumber("AIbg/YawDeadband", 0.08);
+    boolean driverTranslating = Math.hypot(xCmd, yCmd) > 0.12;
+
+    // No auto-align: just AI smoothing/guards.
+    AiBackground.Output bg = IMU.isConnected()
+        ? AIBG.apply(xCmd, yCmd, rotCmd, driverTurning, driverTranslating)
+        : new AiBackground.Output(xCmd, yCmd, rotCmd);
+
+    DRIVETRAIN.drive(xCmd, yCmd, rotCmd, foc);
 
     // ===== POV handling & climb state =====
     int pov = CONTROLLER.getPOV();
