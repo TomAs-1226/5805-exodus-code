@@ -9,9 +9,6 @@ import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
 import edu.wpi.first.math.MathUtil;
-import edu.wpi.first.math.geometry.Rotation2d;
-import edu.wpi.first.math.kinematics.ChassisSpeeds;
-import edu.wpi.first.wpilibj.TimedRobot;
 
 import frc.robot.Telemetry;
 import frc.robot.generated.TunerConstants;
@@ -30,14 +27,17 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
     private final Pigeon2 gyro;
     private final Telemetry telemetry;
 
-    private final SwerveRequest.ApplyRobotSpeeds chassisSpeedsRequest =
-        new SwerveRequest.ApplyChassisSpeeds().withDriveRequestType(DriveRequestType.Velocity);
+    private final SwerveRequest.FieldCentric fieldCentricRequest = new SwerveRequest.FieldCentric()
+        .withDriveRequestType(DriveRequestType.OpenLoopVoltage);
+    private final SwerveRequest.RobotCentric robotCentricRequest = new SwerveRequest.RobotCentric()
+        .withDriveRequestType(DriveRequestType.OpenLoopVoltage);
+    private final SwerveRequest.Idle idleRequest = new SwerveRequest.Idle();
 
     private final double maxSpeedMetersPerSecond =
         TunerConstants.kSpeedAt12Volts.in(MetersPerSecond);
 
-    private double driveOutputScale = 1.0;
-    private double steerOutputScale = 1.0;
+    private double driveOutputScale = 0.60;
+    private double steerOutputScale = 0.85;
 
     public SwerveDrivetrain() {
         this.drivetrain = TunerConstants.createDrivetrain();
@@ -49,7 +49,7 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
 
     @Override
     public void start() {
-        drivetrain.setControl(chassisSpeedsRequest.withSpeeds(new ChassisSpeeds()));
+        applyIdle();
     }
 
     @Override
@@ -59,7 +59,7 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
 
     @Override
     public void stop() {
-        drive(0.0, 0.0, 0.0, false);
+        applyIdle();
     }
 
     /** Zero yaw to 0 degrees. */
@@ -97,26 +97,20 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
         double vyMeters = -strafe * maxSpeedMetersPerSecond * driveOutputScale;
         double omegaRadians = -omega * DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC * steerOutputScale;
 
-        ChassisSpeeds speeds;
         if (foc) {
-            Rotation2d yaw = Rotation2d.fromDegrees(gyro.getYaw().getValueAsDouble());
-            speeds = ChassisSpeeds.fromFieldRelativeSpeeds(
-                vxMeters,
-                vyMeters,
-                omegaRadians,
-                yaw
-            );
+            drivetrain.setControl(fieldCentricRequest
+                .withVelocityX(vxMeters)
+                .withVelocityY(vyMeters)
+                .withRotationalRate(omegaRadians));
         } else {
-            speeds = new ChassisSpeeds(vxMeters, vyMeters, omegaRadians);
+            drivetrain.setControl(robotCentricRequest
+                .withVelocityX(vxMeters)
+                .withVelocityY(vyMeters)
+                .withRotationalRate(omegaRadians));
         }
+    }
 
-        ChassisSpeeds commanded = ChassisSpeeds.discretize(
-            speeds.vxMetersPerSecond,
-            speeds.vyMetersPerSecond,
-            speeds.omegaRadiansPerSecond,
-            TimedRobot.kDefaultPeriod
-        );
-
-        drivetrain.setControl(chassisSpeedsRequest.withSpeeds(commanded));
+    private void applyIdle() {
+        drivetrain.setControl(idleRequest);
     }
 }
