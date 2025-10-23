@@ -30,9 +30,9 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
     private final Telemetry telemetry;
 
     private final SwerveRequest.FieldCentric fieldCentricRequest =
-        new SwerveRequest.FieldCentric().withDriveRequestType(DriveRequestType.OpenLoopVoltage);
+        new SwerveRequest.FieldCentric().withDriveRequestType(DriveRequestType.Velocity);
     private final SwerveRequest.RobotCentric robotCentricRequest =
-        new SwerveRequest.RobotCentric().withDriveRequestType(DriveRequestType.OpenLoopVoltage);
+        new SwerveRequest.RobotCentric().withDriveRequestType(DriveRequestType.Velocity);
     private final SwerveRequest.Idle idleRequest = new SwerveRequest.Idle();
 
     private final double maxSpeedMetersPerSecond =
@@ -107,17 +107,20 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
             fwdCmd = tmp;
         }
 
+        double vxMeters = strCmd * maxSpeedMetersPerSecond * driveOutputScale;
+        double vyMeters = fwdCmd * maxSpeedMetersPerSecond * driveOutputScale;
+        double omegaRadians = omegaCmd * DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC * steerOutputScale;
+
         ChassisSpeeds speeds = ChassisSpeeds.discretize(
-            strCmd,
-            fwdCmd,
-            omegaCmd,
+            vxMeters,
+            vyMeters,
+            omegaRadians,
             TimedRobot.kDefaultPeriod
         );
 
-        double vxMeters = speeds.vxMetersPerSecond * maxSpeedMetersPerSecond * driveOutputScale;
-        double vyMeters = speeds.vyMetersPerSecond * maxSpeedMetersPerSecond * driveOutputScale;
-        double omegaRadians = speeds.omegaRadiansPerSecond *
-            DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC * steerOutputScale;
+        vxMeters = speeds.vxMetersPerSecond;
+        vyMeters = speeds.vyMetersPerSecond;
+        omegaRadians = speeds.omegaRadiansPerSecond;
 
         if (foc) {
             drivetrain.setControl(fieldCentricRequest
