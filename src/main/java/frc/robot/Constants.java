@@ -6,10 +6,6 @@ package frc.robot;
  */
 public final class Constants {
 
-    //put consts here (or dont..)
-    public static final double MODULE_WIDTH = 21.75;
-    public static final double MODULE_LENGTH = 27.75;
-
     /** elevator heights where ELEVATOR_HEIGHTS[index] returns the height for scoring index */
     public static final double[] ELEVATOR_HEIGHTS = {
         0,

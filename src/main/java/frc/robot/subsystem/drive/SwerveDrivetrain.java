@@ -1,51 +1,78 @@
 package frc.robot.subsystem.drive;
 
-import java.util.HashMap;
+import static edu.wpi.first.units.Units.MetersPerSecond;
+import static edu.wpi.first.units.Units.RadiansPerSecond;
+import static edu.wpi.first.units.Units.RotationsPerSecond;
 
 import com.ctre.phoenix6.hardware.Pigeon2;
+import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
+import com.ctre.phoenix6.swerve.SwerveRequest;
 
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
-import frc.robot.Constants;
-import frc.robot.Robot;
-import frc.robot.Constants.Device;
+import edu.wpi.first.wpilibj.TimedRobot;
+
+import frc.robot.Telemetry;
+import frc.robot.generated.TunerConstants;
 import frc.robot.subsystem.AbstractSubsystem;
-import frc.robot.util.RobotMath;
-import frc.robot.util.Vec2;
+import frc.robot.subsystems.CommandSwerveDrivetrain;
 
 /**
- * Simple swerve drivetrain.
- * QoL only: no auto-zeroing during teleop. We rely on SwerveModule's
- * "hold last angle" behavior at very low speeds to avoid snap-to-straight.
+ * Phoenix 6-backed swerve drivetrain wrapper that preserves the legacy
+ * {@link AbstractSubsystem} API used throughout the robot project.
  */
 public final class SwerveDrivetrain extends AbstractSubsystem {
+    private static final double DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC =
+        RotationsPerSecond.of(0.75).in(RadiansPerSecond);
 
-    private final HashMap<String, SwerveModule> MODULES;
-    private final Pigeon2 GYRO;
+    private final CommandSwerveDrivetrain drivetrain;
+    private final Pigeon2 gyro;
+    private final Telemetry telemetry;
+
+    private final SwerveRequest.FieldCentric fieldCentricRequest =
+        new SwerveRequest.FieldCentric().withDriveRequestType(DriveRequestType.OpenLoopVoltage);
+    private final SwerveRequest.RobotCentric robotCentricRequest =
+        new SwerveRequest.RobotCentric().withDriveRequestType(DriveRequestType.OpenLoopVoltage);
+    private final SwerveRequest.Idle idleRequest = new SwerveRequest.Idle();
+
+    private final double maxSpeedMetersPerSecond =
+        TunerConstants.kSpeedAt12Volts.in(MetersPerSecond);
+
+    private double driveOutputScale = 1.0;
+    private double steerOutputScale = 1.0;
 
     public SwerveDrivetrain() {
-        this.MODULES = new HashMap<>();
-        MODULES.put("FL", new SwerveModule(Device.FL_DRIVE, Device.FL_SWERVE, Device.FL_ENCODER));
-        MODULES.put("FR", new SwerveModule(Device.FR_DRIVE, Device.FR_SWERVE, Device.FR_ENCODER));
-        MODULES.put("BL", new SwerveModule(Device.BL_DRIVE, Device.BL_SWERVE, Device.BL_ENCODER));
-        MODULES.put("BR", new SwerveModule(Device.BR_DRIVE, Device.BR_SWERVE, Device.BR_ENCODER));
-        this.GYRO = new Pigeon2(Device.PIGEON_2.ID, "Default Name");
+        this.drivetrain = TunerConstants.createDrivetrain();
+        this.gyro = drivetrain.getPigeon2();
+        this.telemetry = new Telemetry(maxSpeedMetersPerSecond);
+        drivetrain.registerTelemetry(telemetry::telemeterize);
+        drivetrain.seedFieldCentric();
     }
 
-    public void clearFaults() {
-        for (SwerveModule module : MODULES.values()) {
-            module.clearFaults();
-        }
-        GYRO.clearStickyFaults();
+    @Override
+    public void start() {
+        drivetrain.setControl(idleRequest);
     }
 
-    /** Zero yaw to 0 deg */
+    @Override
+    public void update() {
+        // Telemetry is handled internally by Phoenix when registered above.
+    }
+
+    @Override
+    public void stop() {
+        drivetrain.setControl(idleRequest);
+    }
+
+    /** Zero yaw to 0 degrees. */
     public void zeroGyro() {
-        GYRO.setYaw(0);
+        setYawDegrees(0.0);
     }
 
-    /** Set yaw to an explicit angle (deg) */
-    public void setYawDegrees(double deg) {
-        GYRO.setYaw(deg);
+    /** Set yaw to an explicit angle in degrees. */
+    public void setYawDegrees(double degrees) {
+        gyro.setYaw(degrees);
+        drivetrain.seedFieldCentric();
     }
 
     /** Field re-orient for starts facing the driver station (180 deg). */
@@ -53,81 +80,55 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
         setYawDegrees(180.0);
     }
 
-    /** Helper: set drive max for all modules (0..1) */
+    /** Helper: set drive max for all modules (0..1). */
     public void setDriveMaxAll(double max) {
-        for (SwerveModule m : MODULES.values()) m.setMaxDriveState(max);
+        driveOutputScale = MathUtil.clamp(max, 0.0, 1.0);
     }
 
-    /** Helper: set steer max for all modules (0..1) */
+    /** Helper: set steer max for all modules (0..1). */
     public void setSteerMaxAll(double max) {
-        for (SwerveModule m : MODULES.values()) m.setMaxSteerState(max);
+        steerOutputScale = MathUtil.clamp(max, 0.0, 1.0);
     }
 
     /**
      * Core drive: strafe (x), forward (y), and omega (CCW+).
      * 'foc' enables field-oriented control using gyro yaw.
      */
-    public void drive(double str, double fwd, double omega, boolean foc) {
-        // respect team coordinate convention
-        str *= -1;
-        omega *= -1;
+    public void drive(double strafe, double forward, double omega, boolean foc) {
+        double strCmd = -strafe;
+        double fwdCmd = forward;
+        double omegaCmd = -omega;
 
         if (foc) {
-            double theta = -GYRO.getYaw().getValueAsDouble() * (Math.PI / 180.0);
-            double tmp = fwd * Math.cos(theta) + str * Math.sin(theta);
-            str = -fwd * Math.sin(theta) + str * Math.cos(theta);
-            fwd = tmp;
+            double yawRad = Math.toRadians(gyro.getYaw().getValueAsDouble());
+            double theta = -yawRad;
+            double tmp = fwdCmd * Math.cos(theta) + strCmd * Math.sin(theta);
+            strCmd = -fwdCmd * Math.sin(theta) + strCmd * Math.cos(theta);
+            fwdCmd = tmp;
         }
 
-        ChassisSpeeds speeds = ChassisSpeeds.discretize(str, fwd, omega, Robot.kDefaultPeriod);
-        str   = speeds.vxMetersPerSecond;
-        fwd   = speeds.vyMetersPerSecond;
-        omega = speeds.omegaRadiansPerSecond;
+        ChassisSpeeds speeds = ChassisSpeeds.discretize(
+            strCmd,
+            fwdCmd,
+            omegaCmd,
+            TimedRobot.kDefaultPeriod
+        );
 
-        double r  = Math.hypot(Constants.MODULE_LENGTH, Constants.MODULE_WIDTH);
-        double lr = Constants.MODULE_LENGTH / r;
-        double lw = Constants.MODULE_WIDTH / r;
+        double vxMeters = speeds.vxMetersPerSecond * maxSpeedMetersPerSecond * driveOutputScale;
+        double vyMeters = speeds.vyMetersPerSecond * maxSpeedMetersPerSecond * driveOutputScale;
+        double omegaRadians = speeds.omegaRadiansPerSecond *
+            DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC * steerOutputScale;
 
-        double a = str - omega * lr;
-        double b = str + omega * lr;
-        double c = fwd - omega * lw;
-        double d = fwd + omega * lw;
-
-        Vec2 fr = new Vec2(b, c);
-        Vec2 fl = new Vec2(b, d);
-        Vec2 bl = new Vec2(a, d);
-        Vec2 br = new Vec2(a, c);
-
-        double max = RobotMath.maxOf(fr.mag(), fl.mag(), bl.mag(), br.mag());
-        if (max > 1.0) {
-            double rat = 1.0 / max;
-            MODULES.get("FR").setTarget(fr.mag() * rat, fr.toAngle());
-            MODULES.get("FL").setTarget(fl.mag() * rat, fl.toAngle());
-            MODULES.get("BR").setTarget(br.mag() * rat, br.toAngle());
-            MODULES.get("BL").setTarget(bl.mag() * rat, bl.toAngle());
+        if (foc) {
+            drivetrain.setControl(fieldCentricRequest
+                .withVelocityX(vxMeters)
+                .withVelocityY(vyMeters)
+                .withRotationalRate(omegaRadians));
         } else {
-            MODULES.get("FR").setTarget(fr.mag(), fr.toAngle());
-            MODULES.get("FL").setTarget(fl.mag(), fl.toAngle());
-            MODULES.get("BR").setTarget(br.mag(), br.toAngle());
-            MODULES.get("BL").setTarget(bl.mag(), bl.toAngle());
+            drivetrain.setControl(robotCentricRequest
+                .withVelocityX(vxMeters)
+                .withVelocityY(vyMeters)
+                .withRotationalRate(omegaRadians));
         }
-    }
-
-    @Override
-    public void start() {
-        clearFaults();
-        // No auto-steer "zeroing" here; Robot handles initial orientation only.
-    }
-
-    @Override
-    public void update() {
-        for (SwerveModule module : MODULES.values()) {
-            module.update();
-        }
-    }
-
-    @Override
-    public void stop() {
-        drive(0, 0, 0, false);
     }
 }
