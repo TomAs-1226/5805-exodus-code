@@ -9,6 +9,7 @@ import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
 import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.wpilibj.TimedRobot;
 
@@ -29,11 +30,8 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
     private final Pigeon2 gyro;
     private final Telemetry telemetry;
 
-    private final SwerveRequest.FieldCentric fieldCentricRequest =
-        new SwerveRequest.FieldCentric().withDriveRequestType(DriveRequestType.Velocity);
-    private final SwerveRequest.RobotCentric robotCentricRequest =
-        new SwerveRequest.RobotCentric().withDriveRequestType(DriveRequestType.Velocity);
-    private final SwerveRequest.Idle idleRequest = new SwerveRequest.Idle();
+    private final SwerveRequest.ApplyRobotSpeeds chassisSpeedsRequest =
+        new SwerveRequest.ApplyChassisSpeeds().withDriveRequestType(DriveRequestType.Velocity);
 
     private final double maxSpeedMetersPerSecond =
         TunerConstants.kSpeedAt12Volts.in(MetersPerSecond);
@@ -51,7 +49,7 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
 
     @Override
     public void start() {
-        drivetrain.setControl(idleRequest);
+        drivetrain.setControl(chassisSpeedsRequest.withSpeeds(new ChassisSpeeds()));
     }
 
     @Override
@@ -95,43 +93,30 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
      * 'foc' enables field-oriented control using gyro yaw.
      */
     public void drive(double strafe, double forward, double omega, boolean foc) {
-        double strCmd = -strafe;
-        double fwdCmd = forward;
-        double omegaCmd = -omega;
+        double vxMeters = forward * maxSpeedMetersPerSecond * driveOutputScale;
+        double vyMeters = -strafe * maxSpeedMetersPerSecond * driveOutputScale;
+        double omegaRadians = -omega * DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC * steerOutputScale;
 
+        ChassisSpeeds speeds;
         if (foc) {
-            double yawRad = Math.toRadians(gyro.getYaw().getValueAsDouble());
-            double theta = -yawRad;
-            double tmp = fwdCmd * Math.cos(theta) + strCmd * Math.sin(theta);
-            strCmd = -fwdCmd * Math.sin(theta) + strCmd * Math.cos(theta);
-            fwdCmd = tmp;
+            Rotation2d yaw = Rotation2d.fromDegrees(gyro.getYaw().getValueAsDouble());
+            speeds = ChassisSpeeds.fromFieldRelativeSpeeds(
+                vxMeters,
+                vyMeters,
+                omegaRadians,
+                yaw
+            );
+        } else {
+            speeds = new ChassisSpeeds(vxMeters, vyMeters, omegaRadians);
         }
 
-        double vxMeters = fwdCmd * maxSpeedMetersPerSecond * driveOutputScale;
-        double vyMeters = strCmd * maxSpeedMetersPerSecond * driveOutputScale;
-        double omegaRadians = omegaCmd * DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC * steerOutputScale;
-
-        ChassisSpeeds speeds = ChassisSpeeds.discretize(
-            vxMeters,
-            vyMeters,
-            omegaRadians,
+        ChassisSpeeds commanded = ChassisSpeeds.discretize(
+            speeds.vxMetersPerSecond,
+            speeds.vyMetersPerSecond,
+            speeds.omegaRadiansPerSecond,
             TimedRobot.kDefaultPeriod
         );
 
-        vxMeters = speeds.vxMetersPerSecond;
-        vyMeters = speeds.vyMetersPerSecond;
-        omegaRadians = speeds.omegaRadiansPerSecond;
-
-        if (foc) {
-            drivetrain.setControl(fieldCentricRequest
-                .withVelocityX(vxMeters)
-                .withVelocityY(vyMeters)
-                .withRotationalRate(omegaRadians));
-        } else {
-            drivetrain.setControl(robotCentricRequest
-                .withVelocityX(vxMeters)
-                .withVelocityY(vyMeters)
-                .withRotationalRate(omegaRadians));
-        }
+        drivetrain.setControl(chassisSpeedsRequest.withSpeeds(commanded));
     }
 }
