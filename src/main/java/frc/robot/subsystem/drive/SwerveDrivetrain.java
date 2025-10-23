@@ -61,7 +61,7 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
 
     @Override
     public void stop() {
-        drivetrain.setControl(idleRequest);
+        drive(0.0, 0.0, 0.0, false);
     }
 
     /** Zero yaw to 0 degrees. */
@@ -107,8 +107,8 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
             fwdCmd = tmp;
         }
 
-        double vxMeters = strCmd * maxSpeedMetersPerSecond * driveOutputScale;
-        double vyMeters = fwdCmd * maxSpeedMetersPerSecond * driveOutputScale;
+        double vxMeters = fwdCmd * maxSpeedMetersPerSecond * driveOutputScale;
+        double vyMeters = strCmd * maxSpeedMetersPerSecond * driveOutputScale;
         double omegaRadians = omegaCmd * DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC * steerOutputScale;
 
         ChassisSpeeds speeds = ChassisSpeeds.discretize(
