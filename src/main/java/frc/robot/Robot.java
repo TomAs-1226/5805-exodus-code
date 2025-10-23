@@ -598,13 +598,16 @@ public class Robot extends TimedRobot {
       AutoAlignLL.Output out = ALIGN.update();
 
       SmartDashboard.putBoolean("LL/tv", LimelightHelpers.getTV(LL_NAME));
+      SmartDashboard.putBoolean("LL/hasTarget", out.hasTarget);
       SmartDashboard.putNumber("LL/tx",  LimelightHelpers.getTX(LL_NAME));
       SmartDashboard.putNumber("LL/cmdStrafe", out.strafe);
       SmartDashboard.putNumber("LL/cmdOmega",  out.omega);
 
-      // Robot-centric drive during align (strafe + rotate only)
-      DRIVETRAIN.drive(out.strafe, 0.0, out.omega, false);
-      return; // skip normal driver drive while aligning
+      if (out.hasTarget) {
+        // Robot-centric drive during align (strafe + rotate only)
+        DRIVETRAIN.drive(out.strafe, 0.0, out.omega, false);
+        return; // skip normal driver drive while aligning
+      }
     } else {
       if (alignWasHeld) {
         ALIGN.disable();

@@ -24,10 +24,18 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
 
     public SwerveDrivetrain() {
         this.MODULES = new HashMap<>();
-        MODULES.put("FL", new SwerveModule(Device.FL_DRIVE, Device.FL_SWERVE, Device.FL_ENCODER));
-        MODULES.put("FR", new SwerveModule(Device.FR_DRIVE, Device.FR_SWERVE, Device.FR_ENCODER));
-        MODULES.put("BL", new SwerveModule(Device.BL_DRIVE, Device.BL_SWERVE, Device.BL_ENCODER));
-        MODULES.put("BR", new SwerveModule(Device.BR_DRIVE, Device.BR_SWERVE, Device.BR_ENCODER));
+        MODULES.put("FL", new SwerveModule(Device.FL_DRIVE, Device.FL_SWERVE, Device.FL_ENCODER,
+                                            Constants.Swerve.FL_CANCODER_OFFSET_DEG,
+                                            Constants.Swerve.FL_CANCODER_CLOCKWISE_POSITIVE));
+        MODULES.put("FR", new SwerveModule(Device.FR_DRIVE, Device.FR_SWERVE, Device.FR_ENCODER,
+                                            Constants.Swerve.FR_CANCODER_OFFSET_DEG,
+                                            Constants.Swerve.FR_CANCODER_CLOCKWISE_POSITIVE));
+        MODULES.put("BL", new SwerveModule(Device.BL_DRIVE, Device.BL_SWERVE, Device.BL_ENCODER,
+                                            Constants.Swerve.BL_CANCODER_OFFSET_DEG,
+                                            Constants.Swerve.BL_CANCODER_CLOCKWISE_POSITIVE));
+        MODULES.put("BR", new SwerveModule(Device.BR_DRIVE, Device.BR_SWERVE, Device.BR_ENCODER,
+                                            Constants.Swerve.BR_CANCODER_OFFSET_DEG,
+                                            Constants.Swerve.BR_CANCODER_CLOCKWISE_POSITIVE));
         this.GYRO = new Pigeon2(Device.PIGEON_2.ID, "Default Name");
     }
 
