@@ -10,6 +10,36 @@ public final class Constants {
     public static final double MODULE_WIDTH = 21.75;
     public static final double MODULE_LENGTH = 27.75;
 
+    /**
+     * Swerve-related constants and per-module configuration.
+     *
+     * <p>The Cancoder offsets are expressed in degrees and represent the
+     * physical heading of each wheel when the robot is considered to be
+     * "zeroed" (pointing straight ahead).  Tune these values to match the
+     * robot in the real world.</p>
+     */
+    public static final class Swerve {
+        /** Cancoder offset for the front-left module (degrees). */
+        public static final double FL_CANCODER_OFFSET_DEG = 0.0;
+        /** True if the front-left Cancoder reports clockwise as positive. */
+        public static final boolean FL_CANCODER_CLOCKWISE_POSITIVE = false;
+
+        /** Cancoder offset for the front-right module (degrees). */
+        public static final double FR_CANCODER_OFFSET_DEG = 0.0;
+        /** True if the front-right Cancoder reports clockwise as positive. */
+        public static final boolean FR_CANCODER_CLOCKWISE_POSITIVE = false;
+
+        /** Cancoder offset for the back-left module (degrees). */
+        public static final double BL_CANCODER_OFFSET_DEG = 0.0;
+        /** True if the back-left Cancoder reports clockwise as positive. */
+        public static final boolean BL_CANCODER_CLOCKWISE_POSITIVE = false;
+
+        /** Cancoder offset for the back-right module (degrees). */
+        public static final double BR_CANCODER_OFFSET_DEG = 0.0;
+        /** True if the back-right Cancoder reports clockwise as positive. */
+        public static final boolean BR_CANCODER_CLOCKWISE_POSITIVE = false;
+    }
+
     /** elevator heights where ELEVATOR_HEIGHTS[index] returns the height for scoring index */
     public static final double[] ELEVATOR_HEIGHTS = {
         0,

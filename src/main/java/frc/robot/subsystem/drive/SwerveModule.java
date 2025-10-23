@@ -1,6 +1,8 @@
 package frc.robot.subsystem.drive;
 
+import com.ctre.phoenix6.configs.CANcoderConfiguration;
 import com.ctre.phoenix6.hardware.CANcoder;
+import com.ctre.phoenix6.signals.SensorDirectionValue;
 
 import frc.robot.Constants;
 import frc.robot.Constants.Device;
@@ -20,6 +22,9 @@ public class SwerveModule {
     private final KrakenX60 steerMotor;
     // the absolute encoder of this module
     private final CANcoder encoder;
+    private final CANcoderConfiguration encoderConfig;
+
+    private final double cancoderOffsetDeg;
 
     // command targets
     private double targetDriveSpeed;
@@ -36,13 +41,35 @@ public class SwerveModule {
      * Make a new swerve module with device IDs provided in Constants.
      */
     public SwerveModule(Device drive, Device steer, Device encoder) {
+        this(drive, steer, encoder, 0.0, false);
+    }
+
+    /**
+     * Make a new swerve module with device IDs provided in Constants and
+     * Cancoder configuration.
+     */
+    public SwerveModule(Device drive, Device steer, Device encoder,
+                        double cancoderOffsetDeg, boolean cancoderClockwisePositive) {
         this.driveMotor = new KrakenX60(drive.ID, "Default Name");
         this.steerMotor = new KrakenX60(steer.ID, "Default Name");
         this.encoder    = new CANcoder(encoder.ID, "Default Name");
+        this.encoderConfig = new CANcoderConfiguration();
+        this.cancoderOffsetDeg = RobotMath.normalizeAngleDeg(cancoderOffsetDeg);
+
+        configureCancoder(cancoderClockwisePositive);
         // Tame defaults (safer on carpet)
         setMaxMotorStates(0.60, 0.85); // drive 60%, steer 85%
         setTarget(0.0, getAngle());    // start by holding current physical angle
         this.lastAngleDeg = getAngle();
+    }
+
+    /** Apply common Cancoder configuration (range, direction, etc.). */
+    private void configureCancoder(boolean clockwisePositive) {
+        encoderConfig.MagnetSensor.SensorDirection =
+            clockwisePositive ? SensorDirectionValue.Clockwise_Positive
+                               : SensorDirectionValue.CounterClockwise_Positive;
+        encoderConfig.MagnetSensor.MagnetOffset = 0.0;
+        encoder.getConfigurator().apply(encoderConfig);
     }
 
     /** sets max motor states for this module */
@@ -85,6 +112,7 @@ public class SwerveModule {
         this.driveMotor.clearStickyFaults();
         this.steerMotor.clearStickyFaults();
         this.encoder.clearStickyFaults();
+        this.encoder.getConfigurator().apply(encoderConfig);
     }
 
     /**
@@ -99,8 +127,8 @@ public class SwerveModule {
 
         // decide which angle to use
         final boolean holdAngle = Math.abs(clampedDrive) < ANGLE_HOLD_MIN_DRIVE;
-        final double chosenAngleDeg = holdAngle ? lastAngleDeg
-                                                : RobotMath.clamp(angleTargetDeg, -360.0, 360.0);
+        final double desiredAngle = RobotMath.normalizeAngleDeg(angleTargetDeg);
+        final double chosenAngleDeg = holdAngle ? lastAngleDeg : desiredAngle;
 
         // store targets
         this.targetDriveSpeed = clampedDrive;
@@ -114,11 +142,8 @@ public class SwerveModule {
 
     /** current module angle [0, 360) from cancoder absolute */
     public double getAngle() {
-        double angle = getRawAngle();
-        if (angle < 0.0) {
-            angle = 360.0 - Math.abs(angle);
-        }
-        return angle;
+        double angle = getRawAngle() - cancoderOffsetDeg;
+        return RobotMath.normalizeAngleDeg(angle);
     }
 
     /** raw cancoder absolute angle in degrees (0..360) */

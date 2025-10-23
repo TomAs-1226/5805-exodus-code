@@ -74,6 +74,20 @@ public final class RobotMath {
     }
 
     /**
+     * Normalizes an angle in degrees into the range [0, 360).
+     *
+     * @param angleDeg angle in degrees (any value)
+     * @return equivalent angle in the range [0, 360)
+     */
+    public static double normalizeAngleDeg(double angleDeg) {
+        double wrapped = angleDeg % 360.0;
+        if (wrapped < 0.0) {
+            wrapped += 360.0;
+        }
+        return wrapped;
+    }
+
+    /**
      * not going to bother explaining
      * @param values all the comma values
      * @return max of all the values
