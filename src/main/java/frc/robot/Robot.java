@@ -18,16 +18,12 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.filter.SlewRateLimiter;
-
 import edu.wpi.first.math.controller.PIDController;
 
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
 
 import com.ctre.phoenix6.hardware.Pigeon2;
-
-// If you still want AiBackground for future QOL, keep it imported.
-// import frc.robot.ai.AiBackground;
 
 public class Robot extends TimedRobot {
 
@@ -37,31 +33,34 @@ public class Robot extends TimedRobot {
   private final ClimberSubsystem CLIMBER;
 
   private static final PS5Controller CONTROLLER = new PS5Controller(0);
-  private boolean foc = true;       // field-oriented for driver
 
-  // ===== Limelight config (IMPORTANT) =====
-  // Use the CAMERA NAME from the Limelight web UI (NOT the pipeline label).
-  // Default is "limelight". If you renamed it to e.g. "limelight-front", use that exact string.
-  private static final String LL_NAME = "limelight";  // <-- set this to your camera's Name
-  private static final int    LL_PIPELINE_INDEX = 0;  // <-- your AprilTag 3D pipeline index
+  // Field-oriented drive enabled
+  private boolean foc = true;
 
-  // Only strafe & rotation are closed-loop. No forward/back in align.
+  // ===== Turning-only tweak =====
+  // If turning feels reversed after geometry fix, flip this to -1.0
+  private static final double OMEGA_SIGN = 1.0; // try -1.0 if needed
+  private static final double ROT_GAIN   = 0.80;
+
+  // Limelight
+  private static final String LL_NAME = "limelight";
+  private static final int    LL_PIPELINE_INDEX = 0;
+
   private final AutoAlignLL ALIGN = new AutoAlignLL(LL_NAME, LL_PIPELINE_INDEX);
+  private boolean alignWasHeld = false;
 
-  private boolean alignWasHeld = false; // edge detect for L1
-
-  // ===== Driver feel =====
+  // Driver shaping
   private static final double TRANS_DEADBAND = 0.05;
   private static final double ROT_DEADBAND   = 0.06;
-  private static final double TRANS_EXPO = 2.0;
-  private static final double ROT_EXPO   = 2.4;
-  private static final double TRANS_SLEW = 3.0;
-  private static final double ROT_SLEW   = 2.0;
-  private static final double ROT_GAIN   = 0.60;
+  private static final double TRANS_EXPO     = 2.0;
+  private static final double ROT_EXPO       = 2.4;
+  private static final double TRANS_SLEW     = 3.0;
+  private static final double ROT_SLEW       = 2.0;
+  private static final double IDLE_BAND      = 0.02;
 
-  private final SlewRateLimiter xLimiter   = new SlewRateLimiter(TRANS_SLEW);
-  private final SlewRateLimiter yLimiter   = new SlewRateLimiter(TRANS_SLEW);
-  private final SlewRateLimiter rotLimiter = new SlewRateLimiter(ROT_SLEW);
+  private final SlewRateLimiter strafeLimiter = new SlewRateLimiter(TRANS_SLEW);
+  private final SlewRateLimiter fwdLimiter    = new SlewRateLimiter(TRANS_SLEW);
+  private final SlewRateLimiter rotLimiter    = new SlewRateLimiter(ROT_SLEW);
 
   // ===== Climb tunables =====
   private static final double DEFAULT_ZERO_OFFSET_DEG      = 0.0;
@@ -71,18 +70,16 @@ public class Robot extends TimedRobot {
   private static final double DEFAULT_HOME_BACKOFF_DEG     = 5.0;
   private static final double DEFAULT_HOME_SPEED_MAG       = 0.08;
 
-  private static final double DEFAULT_MANUAL_JOG_PERCENT   = 0.14; // base duty (0..1)
-  private static final double DEFAULT_MANUAL_JOG_OUT_MULT  = 2.6;  // OUTWARD boost (>=1)
-  private static final double DEFAULT_MANUAL_JOG_IN_MULT   = 1.8;  // INWARD  boost (>=1)
+  private static final double DEFAULT_MANUAL_JOG_PERCENT   = 0.14;
+  private static final double DEFAULT_MANUAL_JOG_OUT_MULT  = 2.6;
+  private static final double DEFAULT_MANUAL_JOG_IN_MULT   = 1.8;
 
   private static final double DEFAULT_H_TOGGLE_PERCENT = -0.25;
   private boolean hToggleActive = false;
-  private double getHTogglePercent() {
-    return SmartDashboard.getNumber("Climb/HTogglePercent", DEFAULT_H_TOGGLE_PERCENT);
-  }
+  private double getHTogglePercent() { return SmartDashboard.getNumber("Climb/HTogglePercent", DEFAULT_H_TOGGLE_PERCENT); }
 
-  private static final double PROBE_TIME_S           = 0.35;
-  private static final double PROBE_MIN_TRAVEL_DEG   = 10.0;
+  private static final double PROBE_TIME_S         = 0.35;
+  private static final double PROBE_MIN_TRAVEL_DEG = 10.0;
 
   private double getZeroOffsetDeg()     { return SmartDashboard.getNumber("Climb/ZeroOffsetDeg",     DEFAULT_ZERO_OFFSET_DEG); }
   private double getParkAfterZeroDeg()  { return SmartDashboard.getNumber("Climb/ParkAfterZeroDeg",  DEFAULT_PARK_AFTER_ZERO_DEG); }
@@ -99,10 +96,10 @@ public class Robot extends TimedRobot {
   private final SendableChooser<String> autoChooser = new SendableChooser<>();
   private String autoSelected = "do_nothing";
 
-  // ===== Auto: distance-based tunables =====
-  private static final double DEFAULT_IPS_PER_CMD          = 120.0; // inches/sec at cmd=1.0 (calibrate)
-  private static final double DEFAULT_MOVE_CMD             = 0.35;  // forward command (0..1)
-  private static final double DEFAULT_RAISE_DELAY_S        = 0.25;  // used by L3
+  // ===== Auto distances =====
+  private static final double DEFAULT_IPS_PER_CMD          = 120.0;
+  private static final double DEFAULT_MOVE_CMD             = 0.35;
+  private static final double DEFAULT_RAISE_DELAY_S        = 0.25;
 
   private static final double DEFAULT_TARGET_DIST_L2_IN    = 40.0;
   private static final double DEFAULT_BACKOFF_L2_IN        = 7.0;
@@ -147,25 +144,16 @@ public class Robot extends TimedRobot {
   private boolean headingLocked = false;
 
   // CAN bus for Pigeon2
-  private static final String PIGEON_CANBUS = "*"; // your CANivore; "*" = any
+  private static final String PIGEON_CANBUS = "*"; // CANivore; "*" = any
   private final Pigeon2 IMU = new Pigeon2(Constants.Device.PIGEON_2.ID, PIGEON_CANBUS);
 
-  // If you keep AiBackground, leave it passive (don’t let it zero/lock wheels).
-  // private final AiBackground AIBG = new AiBackground(
-  //     () -> IMU.getYaw().getValueAsDouble(),
-  //     () -> IMU.getAngularVelocityZWorld().getValueAsDouble(),
-  //     () -> IMU.getPitch().getValueAsDouble()
-  // );
-
   private void headingHoldStart() {
-    headingTargetDeg = IMU.getYaw().getValueAsDouble(); // degrees
+    headingTargetDeg = IMU.getYaw().getValueAsDouble();
     headingPid.reset();
     headingPid.enableContinuousInput(-180.0, 180.0);
     headingLocked = true;
   }
-  private void headingHoldStop() {
-    headingLocked = false;
-  }
+  private void headingHoldStop() { headingLocked = false; }
   private double headingHoldOmega() {
     if (!headingLocked) return 0.0;
     double yawDeg = IMU.getYaw().getValueAsDouble();
@@ -241,6 +229,9 @@ public class Robot extends TimedRobot {
     SmartDashboard.putString("LL/Name", LL_NAME);
     SmartDashboard.putNumber("LL/Pipeline", LL_PIPELINE_INDEX);
     SmartDashboard.putBoolean("LL/AlignActive", false);
+
+    // Auto-zero gyro on boot
+    try { DRIVETRAIN.zeroGyro(); } catch (Exception ignored) {}
   }
 
   @Override public void robotPeriodic() { SubsystemManager.update(); }
@@ -251,10 +242,6 @@ public class Robot extends TimedRobot {
     System.out.println("[Auto] Selected: " + autoSelected);
 
     DRIVETRAIN.start();
-    if (!orientedForMatch) {
-      DRIVETRAIN.orientFacingDriverStation(); // set yaw=180 so field +Y is “toward reef”
-      orientedForMatch = true;
-    }
     DRIVETRAIN.setDriveMaxAll(0.60);
     DRIVETRAIN.setSteerMaxAll(0.85);
 
@@ -290,7 +277,7 @@ public class Robot extends TimedRobot {
       case "score_l2_backoff6":runScoreL2_RaiseThenGo_Eject_Backoff6(); break;
       case "score_l3":         runScore_Lx(Constants.ELEVATOR_HEIGHTS[3], getTargetL3In(), L3_TOL_IN, L3_RAISE_TIMEOUT_S); break;
       case "score_l4_safe":    runScore_L4_Safe(); break;
-      default:                 DRIVETRAIN.stop(); break;
+      default:                 DRIVETRAIN.drive(0,0,0,foc); break;
     }
   }
 
@@ -299,7 +286,7 @@ public class Robot extends TimedRobot {
     final double driveTargetIn = getLeaveDistIn();
     switch (autoState) {
       case INIT:
-        DRIVETRAIN.stop();
+        DRIVETRAIN.drive(0,0,0,foc);
         segStartYIn = odomYIn;
         headingHoldStart();
         autoState = AutoState.MOVE_FWD;
@@ -310,7 +297,7 @@ public class Robot extends TimedRobot {
         currentFwdCmd = getMoveCmd();
         DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
-          DRIVETRAIN.stop();
+          DRIVETRAIN.drive(0,0,0,foc);
           headingHoldStop();
           autoState = AutoState.DONE;
           System.out.println("[Leave] DONE");
@@ -318,7 +305,7 @@ public class Robot extends TimedRobot {
         break;
 
       default:
-        DRIVETRAIN.stop();
+        DRIVETRAIN.drive(0,0,0,foc);
         break;
     }
   }
@@ -331,7 +318,7 @@ public class Robot extends TimedRobot {
 
     switch (autoState) {
       case INIT:
-        DRIVETRAIN.stop();
+        DRIVETRAIN.drive(0,0,0,foc);
         ELEVATOR.setHeight(targetHeightIn);
         autoTimer.reset(); autoTimer.start();
         autoState = AutoState.RAISE_FIRST;
@@ -352,7 +339,7 @@ public class Robot extends TimedRobot {
         currentFwdCmd = getMoveCmd();
         DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
-          DRIVETRAIN.stop();
+          DRIVETRAIN.drive(0,0,0,foc);
           headingHoldStop();
           ELEVATOR.ejectCoral();
           autoTimer.reset(); autoTimer.start();
@@ -376,7 +363,7 @@ public class Robot extends TimedRobot {
         currentFwdCmd = -getMoveCmd();
         DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYInBack) >= Math.abs(backoffIn)) {
-          DRIVETRAIN.stop();
+          DRIVETRAIN.drive(0,0,0,foc);
           headingHoldStop();
           autoState = AutoState.DONE;
           System.out.println("[L2] DONE");
@@ -384,7 +371,7 @@ public class Robot extends TimedRobot {
         break;
 
       default:
-        DRIVETRAIN.stop();
+        DRIVETRAIN.drive(0,0,0,foc);
         break;
     }
   }
@@ -393,7 +380,7 @@ public class Robot extends TimedRobot {
   private void runScore_Lx(double targetHeightIn, double driveTargetIn, double tolIn, double raiseTimeoutS) {
     switch (autoState) {
       case INIT:
-        DRIVETRAIN.stop();
+        DRIVETRAIN.drive(0,0,0,foc);
         autoTimer.reset(); autoTimer.start();
         raiseDelayTimer.reset(); raiseDelayTimer.start();
         raiseIssued = false;
@@ -411,7 +398,7 @@ public class Robot extends TimedRobot {
         currentFwdCmd = getMoveCmd();
         DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
-          DRIVETRAIN.stop();
+          DRIVETRAIN.drive(0,0,0,foc);
           headingHoldStop();
           autoTimer.reset(); autoTimer.start();
           autoState = AutoState.WAIT_FOR_HEIGHT;
@@ -431,14 +418,14 @@ public class Robot extends TimedRobot {
       case EJECT:
         if (autoTimer.get() > EJECT_TIME_S) {
           ELEVATOR.setEjection(false);
-          DRIVETRAIN.stop();
+          DRIVETRAIN.drive(0,0,0,foc);
           autoState = AutoState.DONE;
           System.out.println("[Lx] DONE");
         }
         break;
 
       default:
-        DRIVETRAIN.stop();
+        DRIVETRAIN.drive(0,0,0,foc);
         break;
     }
   }
@@ -452,7 +439,7 @@ public class Robot extends TimedRobot {
 
     switch (autoState) {
       case INIT:
-        DRIVETRAIN.stop();
+        DRIVETRAIN.drive(0,0,0,foc);
         ELEVATOR.setHeight(l2HeightIn);
         autoTimer.reset(); autoTimer.start();
         autoState = AutoState.RAISE_FIRST;
@@ -473,7 +460,7 @@ public class Robot extends TimedRobot {
         currentFwdCmd = getMoveCmd();
         DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
-          DRIVETRAIN.stop();
+          DRIVETRAIN.drive(0,0,0,foc);
           headingHoldStop();
           segStartYInBack = odomYIn;
           headingHoldStart();
@@ -487,7 +474,7 @@ public class Robot extends TimedRobot {
         currentFwdCmd = -getMoveCmd();
         DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYInBack) >= Math.abs(backoffIn)) {
-          DRIVETRAIN.stop();
+          DRIVETRAIN.drive(0,0,0,foc);
           headingHoldStop();
           ELEVATOR.setHeight(l4HeightIn);
           autoTimer.reset(); autoTimer.start();
@@ -508,24 +495,22 @@ public class Robot extends TimedRobot {
       case EJECT:
         if (autoTimer.get() > EJECT_TIME_S) {
           ELEVATOR.setEjection(false);
-          DRIVETRAIN.stop();
+          DRIVETRAIN.drive(0,0,0,foc);
           autoState = AutoState.DONE;
           System.out.println("[L4 SAFE] DONE");
         }
         break;
 
       default:
-        DRIVETRAIN.stop();
+        DRIVETRAIN.drive(0,0,0,foc);
         break;
     }
   }
 
   @Override
   public void teleopInit() {
-    if (!orientedForMatch) {
-      DRIVETRAIN.orientFacingDriverStation(); // one-time 180 at start of match
-      orientedForMatch = true;
-    }
+    // Auto-zero heading each enable
+    try { DRIVETRAIN.zeroGyro(); } catch (Exception ignored) {}
 
     SmartDashboard.putNumber("Elevator/ShotPowerScale", 1.0);
 
@@ -541,16 +526,18 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("Climb/ManualJogInMult",   DEFAULT_MANUAL_JOG_IN_MULT);
     SmartDashboard.putNumber("Climb/HTogglePercent",    DEFAULT_H_TOGGLE_PERCENT);
 
-    // Ensure LL pipeline/LEDs are sane on enter
     LimelightHelpers.setPipelineIndex(LL_NAME, LL_PIPELINE_INDEX);
     LimelightHelpers.setLEDMode_PipelineControl(LL_NAME);
     SmartDashboard.putBoolean("LL/AlignActive", false);
     alignWasHeld = false;
+
+    DRIVETRAIN.setDriveMaxAll(0.60);
+    DRIVETRAIN.setSteerMaxAll(1.00);
   }
 
   @Override
   public void teleopPeriodic() {
-    // ===== Presets / buttons (unchanged)… =====
+    // ===== Elevator presets / toggles =====
     if (CONTROLLER.getCrossButtonPressed()) {
       ELEVATOR.setHeight(Constants.ELEVATOR_HEIGHTS[1]);
     } else if (CONTROLLER.getSquareButtonPressed()) {
@@ -572,18 +559,23 @@ public class Robot extends TimedRobot {
       else ELEVATOR.setEjection(!ELEVATOR.isEjecting());
     }
     if (CONTROLLER.getL2ButtonPressed()) ELEVATOR.setAlgaeMode(!ELEVATOR.inAlgaeMode());
-    if (CONTROLLER.getTouchpadButtonPressed()) DRIVETRAIN.zeroGyro();
 
-    // ===== Driver shaping =====
-    double rawX   = CONTROLLER.getLeftX();
-    double rawY   = CONTROLLER.getLeftY();
-    double rawRot = CONTROLLER.getRightX();
+    if (CONTROLLER.getTouchpadButtonPressed()) {
+      // Manual heading zero if needed
+      DRIVETRAIN.zeroGyro();
+    }
 
-    double xCmd   = xLimiter.calculate(shapeInput(rawX,   TRANS_DEADBAND, TRANS_EXPO));
-    double yCmd   = yLimiter.calculate(shapeInput(rawY,   TRANS_DEADBAND, TRANS_EXPO));
-    double rotCmd = rotLimiter.calculate(shapeInput(rawRot, ROT_DEADBAND,  ROT_EXPO)) * ROT_GAIN;
+    // ===== Joystick mapping (turning-only tweak lives in omega) =====
+    // WPILib: forward = -LY, strafeRight = +LX, +CCW is positive
+    double rawLX  = CONTROLLER.getLeftX();
+    double rawLY  = CONTROLLER.getLeftY();
+    double rawRX  = CONTROLLER.getRightX();
 
-    // ===== Auto-Align on L1 hold =====
+    double strafeRight = strafeLimiter.calculate( shapeInput(rawLX,  TRANS_DEADBAND, TRANS_EXPO) );
+    double forward     = fwdLimiter.   calculate( shapeInput(-rawLY, TRANS_DEADBAND, TRANS_EXPO) );
+    double omegaCCW    = rotLimiter.   calculate( shapeInput(-rawRX, ROT_DEADBAND,   ROT_EXPO) ) * ROT_GAIN * OMEGA_SIGN;
+
+    // ===== Auto-Align on L1 =====
     boolean l1Held = CONTROLLER.getL1Button();
     if (l1Held) {
       if (!alignWasHeld) {
@@ -596,29 +588,34 @@ public class Robot extends TimedRobot {
       alignWasHeld = true;
 
       AutoAlignLL.Output out = ALIGN.update();
-
       SmartDashboard.putBoolean("LL/tv", LimelightHelpers.getTV(LL_NAME));
       SmartDashboard.putNumber("LL/tx",  LimelightHelpers.getTX(LL_NAME));
       SmartDashboard.putNumber("LL/cmdStrafe", out.strafe);
       SmartDashboard.putNumber("LL/cmdOmega",  out.omega);
 
-      // Robot-centric drive during align (strafe + rotate only)
+      // Robot-centric during align (strafe + rotate only)
       DRIVETRAIN.drive(out.strafe, 0.0, out.omega, false);
-      return; // skip normal driver drive while aligning
+      return;
     } else {
       if (alignWasHeld) {
         ALIGN.disable();
         LimelightHelpers.setLEDMode_PipelineControl(LL_NAME);
         SmartDashboard.putBoolean("LL/AlignActive", false);
-        System.out.println("[Align] Disabled");
+        System.out.println("[Align] Disabled]");
       }
       alignWasHeld = false;
     }
 
     // ===== Normal driver drive =====
-    DRIVETRAIN.drive(xCmd, yCmd, rotCmd, foc);
+    if (!Double.isFinite(forward) || !Double.isFinite(strafeRight) || !Double.isFinite(omegaCCW)) {
+      DRIVETRAIN.drive(0,0,0,foc);
+    } else if (Math.abs(forward) < IDLE_BAND && Math.abs(strafeRight) < IDLE_BAND && Math.abs(omegaCCW) < IDLE_BAND) {
+      DRIVETRAIN.drive(0,0,0,foc);
+    } else {
+      DRIVETRAIN.drive(strafeRight, forward, omegaCCW, foc);
+    }
 
-    // ===== Climb state machine (unchanged)… =====
+    // ===== Climber logic (unchanged) =====
     int pov = CONTROLLER.getPOV();
     boolean downHeld  = (pov == 180); // INWARD
     boolean upHeld    = (pov ==   0); // OUTWARD
@@ -749,12 +746,12 @@ public class Robot extends TimedRobot {
 
       case CALIBRATE_AND_PARK: {
         if (CLIMBER.isGBAtDegrees(getParkAfterZeroDeg())) {
-          System.out.println("[Climb] Park reached — homing complete");
+          System.out.println("[Climb] Park reached -- homing complete");
           phase = Phase.IDLE;
           lastPOV = -1;
         }
         if (timer.get() > 3.0) {
-          System.out.println("[Climb] Park timeout — IDLE");
+          System.out.println("[Climb] Park timeout -- IDLE");
           phase = Phase.IDLE;
         }
         break;
@@ -773,10 +770,9 @@ public class Robot extends TimedRobot {
 
   @Override
   public void disabledInit() {
+    DRIVETRAIN.drive(0,0,0,foc);
     if (CLIMBER != null) CLIMBER.stopAll();
-    hToggleActive = false;
 
-    // Return LEDs to pipeline control when disabled
     LimelightHelpers.setLEDMode_PipelineControl(LL_NAME);
     ALIGN.disable();
     SmartDashboard.putBoolean("LL/AlignActive", false);

@@ -16,8 +16,11 @@ import frc.robot.subsystem.AbstractSubsystem;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 
 /**
- * Phoenix 6-backed swerve drivetrain wrapper that preserves the legacy
- * {@link AbstractSubsystem} API used throughout the robot project.
+ * Phoenix 6-backed swerve drivetrain wrapper that preserves the legacy AbstractSubsystem API.
+ * Convention:
+ *   forward  ( +X ) is field/robot forward
+ *   strafe   ( +right stick ) -> +strafe -> robot +Y is left, so we internally negate to -Y
+ *   omegaCCW ( + ) counter-clockwise
  */
 public final class SwerveDrivetrain extends AbstractSubsystem {
     private static final double DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC =
@@ -29,8 +32,10 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
 
     private final SwerveRequest.FieldCentric fieldCentricRequest = new SwerveRequest.FieldCentric()
         .withDriveRequestType(DriveRequestType.OpenLoopVoltage);
+
     private final SwerveRequest.RobotCentric robotCentricRequest = new SwerveRequest.RobotCentric()
         .withDriveRequestType(DriveRequestType.OpenLoopVoltage);
+
     private final SwerveRequest.Idle idleRequest = new SwerveRequest.Idle();
 
     private final double maxSpeedMetersPerSecond =
@@ -62,20 +67,15 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
         applyIdle();
     }
 
-    /** Zero yaw to 0 degrees. */
+    /** Zero yaw to 0 degrees (also reseeds FieldCentric). */
     public void zeroGyro() {
         setYawDegrees(0.0);
     }
 
-    /** Set yaw to an explicit angle in degrees. */
+    /** Set yaw to an explicit angle in degrees and reseed field-centric. */
     public void setYawDegrees(double degrees) {
         gyro.setYaw(degrees);
         drivetrain.seedFieldCentric();
-    }
-
-    /** Field re-orient for starts facing the driver station (180 deg). */
-    public void orientFacingDriverStation() {
-        setYawDegrees(180.0);
     }
 
     /** Helper: set drive max for all modules (0..1). */
@@ -89,13 +89,16 @@ public final class SwerveDrivetrain extends AbstractSubsystem {
     }
 
     /**
-     * Core drive: strafe (x), forward (y), and omega (CCW+).
-     * 'foc' enables field-oriented control using gyro yaw.
+     * Core drive:
+     *  strafe: + to the RIGHT on the stick (we map to -Y internally)
+     *  forward: + forward
+     *  omegaCCW: + CCW
+     *  foc: true = field-oriented, false = robot-centric
      */
-    public void drive(double strafe, double forward, double omega, boolean foc) {
-        double vxMeters = forward * maxSpeedMetersPerSecond * driveOutputScale;
-        double vyMeters = -strafe * maxSpeedMetersPerSecond * driveOutputScale;
-        double omegaRadians = -omega * DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC * steerOutputScale;
+    public void drive(double strafe, double forward, double omegaCCW, boolean foc) {
+        double vxMeters     = forward * maxSpeedMetersPerSecond * driveOutputScale;   // +X forward
+        double vyMeters     = -strafe * maxSpeedMetersPerSecond * driveOutputScale;   // stick right => -Y
+        double omegaRadians =  omegaCCW * DEFAULT_MAX_ANGULAR_RATE_RAD_PER_SEC * steerOutputScale; // +CCW
 
         if (foc) {
             drivetrain.setControl(fieldCentricRequest
