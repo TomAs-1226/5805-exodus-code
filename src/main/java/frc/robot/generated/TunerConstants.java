@@ -23,16 +23,27 @@ public class TunerConstants {
 
     // The steer motor uses any SwerveModule.SteerRequestType control request with the
     // output type specified by SwerveModuleConstants.SteerMotorClosedLoopOutput
-    private static final Slot0Configs steerGains = new Slot0Configs()
-    .withKP(60).withKI(0).withKD(1.0)
-    .withKS(0.08).withKV(1.2).withKA(0)
-    .withStaticFeedforwardSign(StaticFeedforwardSignValue.UseClosedLoopSign);
-
+   // --- Steer PID: calmer, adds damping ---
+   private static final ClosedLoopRampsConfigs steerCLRamp =
+   new ClosedLoopRampsConfigs()
+       .withVoltageClosedLoopRampPeriod(0.06);
+private static final Slot0Configs steerGains = new Slot0Configs()
+.withKP(42.0)   // start 38–48: lower than defaults to reduce hunt
+.withKI(0.0)
+.withKD(1.3)    // damping; adjust 0.7–1.2 if slight jitter remains
+.withKS(0.07)   // static FF to overcome module stiction on carpet
+.withKV(1.2)    // harmless in Position Voltage; leave ~1.2
+.withKA(0.0)
+.withStaticFeedforwardSign(StaticFeedforwardSignValue.UseClosedLoopSign);
     // When using closed-loop control, the drive motor uses the control
     // output type specified by SwerveModuleConstants.DriveMotorClosedLoopOutput
     private static final Slot0Configs driveGains = new Slot0Configs()
-        .withKP(0.1).withKI(0).withKD(0)
-        .withKS(0).withKV(0.124);
+    .withKP(0.10)   // 0.08–0.14 typical
+    .withKI(0.0)
+    .withKD(0.0)
+    .withKS(0.06)   // static friction compensation
+    .withKV(0.12)   // ~volts per (m/s) after your gearing
+    .withKA(0.0);
 
     // The closed-loop output type to use for the steer motors;
     // This affects the PID/FF gains for the steer motors
@@ -41,6 +52,7 @@ public class TunerConstants {
     // This affects the PID/FF gains for the drive motors
     private static final ClosedLoopOutputType kDriveClosedLoopOutput = ClosedLoopOutputType.Voltage;
     private static final double kGlobalAzimuthOffsetRot = 0.25;
+    private static final double kFrontRight_TrimRot = -0.003;
     // The type of motor used for the drive motor
     private static final DriveMotorArrangement kDriveMotorType = DriveMotorArrangement.TalonFX_Integrated;
     // The type of motor used for the drive motor
@@ -58,13 +70,13 @@ public class TunerConstants {
     // Some configs will be overwritten; check the `with*InitialConfigs()` API documentation.
     private static final TalonFXConfiguration driveInitialConfigs = new TalonFXConfiguration();
     private static final TalonFXConfiguration steerInitialConfigs = new TalonFXConfiguration()
-        .withCurrentLimits(
-            new CurrentLimitsConfigs()
-                // Swerve azimuth does not require much torque output, so we can set a relatively low
-                // stator current limit to help avoid brownouts without impacting performance.
-                .withStatorCurrentLimit(Amps.of(60))
-                .withStatorCurrentLimitEnable(true)
-        );
+    .withCurrentLimits(
+        new CurrentLimitsConfigs()
+            .withStatorCurrentLimit(Amps.of(40))   // lower than 60A helps whining fights
+            .withStatorCurrentLimitEnable(true)
+    )
+    .withSlot0(steerGains)
+    .withClosedLoopRamps(steerCLRamp);
     private static final CANcoderConfiguration encoderInitialConfigs = new CANcoderConfiguration();
     // Configs for the Pigeon 2; leave this null to skip applying Pigeon 2 configs
     private static final Pigeon2Configuration pigeonConfigs = null;
@@ -141,7 +153,7 @@ public class TunerConstants {
     private static final int kFrontRightDriveMotorId = 27;
     private static final int kFrontRightSteerMotorId = 24;
     private static final int kFrontRightEncoderId = 1;
-    private static final Angle kFrontRightEncoderOffset = Rotations.of(-1.356201171875);
+    private static final Angle kFrontRightEncoderOffset = Rotations.of(-1.356201171875 + kFrontRight_TrimRot);
     private static final boolean kFrontRightSteerMotorInverted = false;
     private static final boolean kFrontRightEncoderInverted = true;
 
@@ -179,7 +191,7 @@ public class TunerConstants {
     public static final SwerveModuleConstants<TalonFXConfiguration, TalonFXConfiguration, CANcoderConfiguration> FrontRight =
         ConstantCreator.createModuleConstants(
             kFrontRightSteerMotorId, kFrontRightDriveMotorId, kFrontRightEncoderId, kFrontRightEncoderOffset,
-            kFrontRightXPos, kFrontRightYPos, kInvertRightSide, kFrontRightSteerMotorInverted, kFrontRightEncoderInverted
+            kFrontRightXPos, kFrontRightYPos, !kInvertRightSide, kFrontRightSteerMotorInverted, kFrontRightEncoderInverted
         );
     public static final SwerveModuleConstants<TalonFXConfiguration, TalonFXConfiguration, CANcoderConfiguration> BackLeft =
         ConstantCreator.createModuleConstants(
