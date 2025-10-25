@@ -16,7 +16,6 @@ import edu.wpi.first.wpilibj.DriverStation.Alliance;
 import com.ctre.phoenix6.configs.Pigeon2Configuration;
 import com.ctre.phoenix6.configs.MountPoseConfigs;
 
-
 /**
  * Swerve wrapper with:
  * - True field-centric control using CTRE Phoenix 6
@@ -24,7 +23,6 @@ import com.ctre.phoenix6.configs.MountPoseConfigs;
  * - No explicit Center-of-Rotation; defaults to robot center
  */
 public class SwerveDrivetrain extends AbstractSubsystem {
-
 
   // Tunables
   private double maxTranslationalMps = 5.0;
@@ -117,23 +115,23 @@ public class SwerveDrivetrain extends AbstractSubsystem {
     scale = clamp(scale, 0.0, 1.0);
     maxRotationalRadPerSec = Math.toRadians(360.0) * scale;
   }
-  /** 
- * Invert gyro yaw by toggling mount pose (roll 180 flips yaw sign).
- * Call this once at init, not every loop.
- */
-public void setInvertGyroYaw(boolean invert) {
+
+  /**
+   * Invert gyro yaw by toggling mount pose (roll 180 flips yaw sign).
+   * Call this once at init, not every loop.
+   */
+  public void setInvertGyroYaw(boolean invert) {
     var p2 = ctre.getPigeon2();
     if (p2 == null) return;
-  
+
     var cfg = new Pigeon2Configuration();
     // Pull current config so we only change what we intend.
     p2.getConfigurator().refresh(cfg);
-  
+
     if (cfg.MountPose == null) cfg.MountPose = new MountPoseConfigs();
     // Keep yaw/pitch as-is; flip roll 0 <-> 180 to invert yaw sign cleanly.
-    // If your IMU is physically upside-down, 180 is typically correct.
     cfg.MountPose.MountPoseRoll = invert ? 180.0 : 0.0;
-  
+
     p2.getConfigurator().apply(cfg);
   }
 
