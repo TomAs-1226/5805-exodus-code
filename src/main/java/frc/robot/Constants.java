@@ -17,7 +17,10 @@ public final class Constants {
 
     /**
      * dont instantiate this guh..
+     * 
      */
+
+     public static final double ALGAE_L4_OFFSET_IN = 3.0;
     private Constants() {
         throw new UnsupportedOperationException("attempted to instantiate constants class!!");
     }
