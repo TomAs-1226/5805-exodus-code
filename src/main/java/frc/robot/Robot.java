@@ -99,7 +99,7 @@ public class Robot extends TimedRobot {
 
   private double getLeaveDistIn()    { return SmartDashboard.getNumber("Auto/LeaveDistIn",   DEFAULT_LEAVE_DIST_IN); }
 
-  // Heading-hold (autos) – keep simple PID on IMU yaw
+  // Heading-hold (autos) – simple PID on IMU yaw
   private static final double HEAD_KP = 0.02;
   private static final double HEAD_KI = 0.00;
   private static final double HEAD_KD = 0.001;
@@ -108,7 +108,7 @@ public class Robot extends TimedRobot {
   private double headingTargetDeg = 0.0;
   private boolean headingLocked = false;
 
-  // Pigeon2 (for autos PID only; CTRE drivetrain uses its own internally)
+  // Pigeon2 (for autos PID only; CTRE drivetrain handles field-centric internally)
   private static final String PIGEON_CANBUS = "*";
   private final Pigeon2 IMU = new Pigeon2(Constants.Device.PIGEON_2.ID, PIGEON_CANBUS);
 
@@ -145,11 +145,8 @@ public class Robot extends TimedRobot {
   private int lastPOV = -1;
   private double homeDirSign = +1.0;
 
-  // Legacy seed (not used for transforms now)
+  // Legacy record (not used for transforms now)
   private double yawSeedRad = 0.0;
-
-  // Rotation output polarity (dashboard-controlled; no auto flip)
-  private boolean rotOutputInvert = false;
 
   public Robot() {
     this.COMSYS     = new CommandSystem(this);
@@ -165,15 +162,15 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("Drive/CoR_Y_in", 0.0);
     SmartDashboard.putNumber("Drive/SideTrim", 0.0);
 
-    // Use this if you want a small hand-tuned nudge (e.g., +5 if robot forward is slightly off).
+    // Optional hand-tuned forward nudge (e.g., +5 if physical forward is slightly off)
     SmartDashboard.putNumber("Drive/HeadingOffsetDeg", 0.0);
 
-    // Fixed yaw calibration for IMU orientation vs robot-forward (try 0, 90, -90, 180).
+    // Quick calibration helpers if your IMU mounting gave you a 90° slip
     SmartDashboard.putNumber("Drive/YawCalibDeg", 0.0);
-    SmartDashboard.putBoolean("Drive/Apply90Fix", false);  // quick test: adds +90°
+    SmartDashboard.putBoolean("Drive/Apply90Fix", false);
 
+    // Only one rotate toggle now (stick sense). Output sign is fixed.
     SmartDashboard.putBoolean("Drive/InvertRotStick",  false);
-    SmartDashboard.putBoolean("Drive/InvertRotOutput", true);  // default TRUE to match your feel
 
     // Auto chooser
     autoChooser.setDefaultOption("Do Nothing", "do_nothing");
@@ -202,11 +199,6 @@ public class Robot extends TimedRobot {
 
     SmartDashboard.putNumber("Auto/LeaveDistIn",    DEFAULT_LEAVE_DIST_IN);
     SmartDashboard.putNumber("Auto/OdomYIn", 0.0);
-
-    // Limelight bits
-    SmartDashboard.putString("LL/Name", LL_NAME);
-    SmartDashboard.putNumber("LL/Pipeline", LL_PIPELINE_INDEX);
-    SmartDashboard.putBoolean("LL/AlignActive", false);
   }
 
   @Override public void robotPeriodic() { SubsystemManager.update(); }
@@ -266,7 +258,6 @@ public class Robot extends TimedRobot {
 
       case MOVE_FWD:
         currentFwdCmd = getMoveCmd();
-        // X forward, Y left (CTRE convention)
         DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
           DRIVETRAIN.drive(0,0,0,true);
@@ -465,7 +456,6 @@ public class Robot extends TimedRobot {
 
   @Override
   public void teleopInit() {
-    // Point wheels forward briefly
     try { DRIVETRAIN.pointWheelsForward(); } catch (Exception ignored) {}
     doStartupWheelZero = true;
     startupWheelZeroUntilSec = Timer.getFPGATimestamp() + 0.40;
@@ -473,17 +463,14 @@ public class Robot extends TimedRobot {
     // Legacy record only
     yawSeedRad = IMU.getRotation2d().getRadians();
 
-    // === One-time operator perspective forward ===
+    // One-time operator perspective forward
     final double headingOffsetDeg = SmartDashboard.getNumber("Drive/HeadingOffsetDeg", 0.0);
     double yawCalib = SmartDashboard.getNumber("Drive/YawCalibDeg", 0.0);
     if (SmartDashboard.getBoolean("Drive/Apply90Fix", false)) yawCalib += 90.0;
 
     DRIVETRAIN.setDriverForwardOffsetDegrees(headingOffsetDeg + yawCalib);
-    DRIVETRAIN.setOperatorPerspectiveForAlliance(); // sets Blue=0°, Red=180° plus our offsets
-    DRIVETRAIN.seedFieldCentricNow();               // lock it in (forward is fixed). 
-
-    // Read stable rotation output polarity (no auto flip)
-    rotOutputInvert = SmartDashboard.getBoolean("Drive/InvertRotOutput", true);
+    DRIVETRAIN.setOperatorPerspectiveForAlliance(); // Blue=0°, Red=180° plus our offsets
+    DRIVETRAIN.seedFieldCentricNow();               // Lock forward reference (no per-loop changes)
   }
 
   @Override
@@ -508,7 +495,6 @@ public class Robot extends TimedRobot {
       if (ELEVATOR.inAlgaeMode()) h += 1.0;
       ELEVATOR.setHeight(h);
     } else if (CONTROLLER.getTriangleButtonPressed()) {
-      ELEVATOR.setHeight(Constants.ELEVATOR_HEIGHTS[4]);
       double h = Constants.ELEVATOR_HEIGHTS[4];
       if (ELEVATOR.inAlgaeMode()) h += Constants.ALGAE_L4_OFFSET_IN;
       ELEVATOR.setHeight(h);
@@ -541,23 +527,26 @@ public class Robot extends TimedRobot {
     double strafeRight = strafeLimiter.calculate( shapeInput(rawLX,  TRANS_DEADBAND, TRANS_EXPO) );
     double forward     = fwdLimiter.   calculate( shapeInput(-rawLY, TRANS_DEADBAND, TRANS_EXPO) );
 
-    // Turning: stick right = CW (negative CCW)
+    // Turning: RIGHT stick -> CW. CTRE expects +CCW, so negate ONCE.
     double omegaCCW = -rotLimiter.calculate( shapeInput(rawRX, ROT_DEADBAND, ROT_EXPO) ) * ROT_GAIN;
-    if (SmartDashboard.getBoolean("Drive/InvertRotStick", false)) omegaCCW = -omegaCCW;
+    if (SmartDashboard.getBoolean("Drive/InvertRotStick", false)) {
+      omegaCCW = -omegaCCW; // optional single flip if your driver prefers opposite
+    }
 
     // deadband snap
     strafeRight = snapZero(strafeRight);
     forward     = snapZero(forward);
     omegaCCW    = snapZero(omegaCCW);
 
-    // Keep your preferred strafe sense: positive = "right stick feels correct" at 0°/180°
+    // Keep your preferred strafe sense
     double left = -strafeRight;
 
-    double omegaToSend = rotOutputInvert ? -omegaCCW : omegaCCW;
+    // Debug: verify sign live
+    SmartDashboard.putNumber("Drive/OmegaCCW", omegaCCW);
 
-    boolean idle = (Math.abs(forward) < IDLE_BAND && Math.abs(left) < IDLE_BAND && Math.abs(omegaToSend) < IDLE_BAND);
+    boolean idle = (Math.abs(forward) < IDLE_BAND && Math.abs(left) < IDLE_BAND && Math.abs(omegaCCW) < IDLE_BAND);
     if (idle) DRIVETRAIN.drive(0, 0, 0, true);
-    else      DRIVETRAIN.drive(forward, left, omegaToSend, true);
+    else      DRIVETRAIN.drive(forward, left, omegaCCW, true);
 
     // ===== Climber quick controls (unchanged; trimmed) =====
     int pov = CONTROLLER.getPOV();
@@ -609,5 +598,3 @@ public class Robot extends TimedRobot {
     return (Math.abs(v) < 0.04) ? 0.0 : v;
   }
 }
-
-
