@@ -1,3 +1,4 @@
+// FULL FILE — Robot.java
 package frc.robot;
 
 import edu.wpi.first.wpilibj.PS5Controller;
@@ -26,7 +27,6 @@ import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
 import com.ctre.phoenix6.hardware.Pigeon2;
 
 import edu.wpi.first.wpilibj.DriverStation;
-import edu.wpi.first.wpilibj.DriverStation.Alliance;
 
 public class Robot extends TimedRobot {
   private boolean doStartupWheelZero = false;
@@ -39,7 +39,7 @@ public class Robot extends TimedRobot {
 
   private static final PS5Controller CONTROLLER = new PS5Controller(0);
 
-  // We do software FOC in teleop (explicit transforms)
+  // CTRE field-centric (no manual matrix)
   private static final double ROT_GAIN   = 0.80;
 
   // Limelight
@@ -110,12 +110,12 @@ public class Robot extends TimedRobot {
   private double headingTargetDeg = 0.0;
   private boolean headingLocked = false;
 
-  // Pigeon2
+  // Pigeon2 (IMU)
   private static final String PIGEON_CANBUS = "*";
   private final Pigeon2 IMU = new Pigeon2(Constants.Device.PIGEON_2.ID, PIGEON_CANBUS);
 
   private void headingHoldStart() {
-    headingTargetDeg = IMU.getYaw().getValueAsDouble();
+    headingTargetDeg = IMU.getRotation2d().getDegrees(); // CCW+, NWU
     headingPid.reset();
     headingPid.enableContinuousInput(-180.0, 180.0);
     headingLocked = true;
@@ -123,7 +123,7 @@ public class Robot extends TimedRobot {
   private void headingHoldStop() { headingLocked = false; }
   private double headingHoldOmega() {
     if (!headingLocked) return 0.0;
-    double yawDeg = IMU.getYaw().getValueAsDouble();
+    double yawDeg = IMU.getRotation2d().getDegrees();
     double cmd = headingPid.calculate(yawDeg, headingTargetDeg);
     return MathUtil.clamp(cmd, -1.0, 1.0);
   }
@@ -150,14 +150,11 @@ public class Robot extends TimedRobot {
   private double homeDirSign = +1.0;
   private static final double STICK_SNAP = 0.04;
 
-  // ======= Software FOC state =======
-  // Removed: jolt-based auto-correction variables
-  // NEW: store yaw seed in radians; used by the single-rotation transform
+  // Legacy seed (not used for transforms now)
   private double yawSeedRad = 0.0;
 
   // Rotation output polarity (dashboard-controlled; no auto flip)
   private boolean rotOutputInvert = false;
-  // ==================================
 
   public Robot() {
     this.COMSYS     = new CommandSystem(this);
@@ -174,10 +171,9 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("Drive/SideTrim", 0.0);
     SmartDashboard.putNumber("Drive/HeadingOffsetDeg", 0.0);
 
-    // Defaults (flip these if your feel/hardware requires)
-    SmartDashboard.putBoolean("Drive/InvertGyroYaw",   false); // software polarity for yaw sign
-    SmartDashboard.putBoolean("Drive/InvertRotStick",  false); // flips stick mapping feel
-    SmartDashboard.putBoolean("Drive/InvertRotOutput", true);  // *** default TRUE to avoid the jolt ***
+    SmartDashboard.putBoolean("Drive/InvertGyroYaw",   false); // unused with Rotation2d
+    SmartDashboard.putBoolean("Drive/InvertRotStick",  false);
+    SmartDashboard.putBoolean("Drive/InvertRotOutput", true);  // default TRUE to avoid jolt
 
     // Auto chooser
     autoChooser.setDefaultOption("Do Nothing", "do_nothing");
@@ -270,7 +266,8 @@ public class Robot extends TimedRobot {
 
       case MOVE_FWD:
         currentFwdCmd = getMoveCmd();
-        DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
+        // X forward, Y left (CTRE convention)
+        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
           DRIVETRAIN.drive(0,0,0,true);
           headingHoldStop();
@@ -309,7 +306,7 @@ public class Robot extends TimedRobot {
 
       case MOVE_FWD:
         currentFwdCmd = getMoveCmd();
-        DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
+        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
           DRIVETRAIN.drive(0,0,0,true);
           headingHoldStop();
@@ -331,7 +328,7 @@ public class Robot extends TimedRobot {
 
       case BACKOFF:
         currentFwdCmd = -getMoveCmd();
-        DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
+        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYInBack) >= Math.abs(backoffIn)) {
           DRIVETRAIN.drive(0,0,0,true);
           headingHoldStop();
@@ -364,7 +361,7 @@ public class Robot extends TimedRobot {
           raiseIssued = true;
         }
         currentFwdCmd = getMoveCmd();
-        DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
+        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
           DRIVETRAIN.drive(0,0,0,true);
           headingHoldStop();
@@ -421,7 +418,7 @@ public class Robot extends TimedRobot {
 
       case MOVE_FWD:
         currentFwdCmd = getMoveCmd();
-        DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
+        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
           DRIVETRAIN.drive(0,0,0,true);
           headingHoldStop();
@@ -434,7 +431,7 @@ public class Robot extends TimedRobot {
 
       case BACKOFF:
         currentFwdCmd = -getMoveCmd();
-        DRIVETRAIN.drive(0.0, currentFwdCmd, headingHoldOmega(), true);
+        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
         if (Math.abs(odomYIn - segStartYInBack) >= Math.abs(backoffIn)) {
           DRIVETRAIN.drive(0,0,0,true);
           headingHoldStop();
@@ -473,15 +470,16 @@ public class Robot extends TimedRobot {
     doStartupWheelZero = true;
     startupWheelZeroUntilSec = Timer.getFPGATimestamp() + 0.40;
 
-    // Reset FOC seed
-    double yawDegRaw = IMU.getYaw().getValueAsDouble();
-    boolean invYaw   = SmartDashboard.getBoolean("Drive/InvertGyroYaw", false);
+    // Keep for reference (CTRE uses its own seed)
+    yawSeedRad = IMU.getRotation2d().getRadians();
 
-    // Seed: store current yaw only (radians). Perspective φ is handled in the transform.
-    double yawUsedDeg = invYaw ? -yawDegRaw : yawDegRaw;
-    yawSeedRad = Math.toRadians(yawUsedDeg);
+    // Apply dashboard heading offset once, set operator perspective, then seed CTRE field-centric
+    double headingOffsetDeg = SmartDashboard.getNumber("Drive/HeadingOffsetDeg", 0.0);
+    DRIVETRAIN.setDriverForwardOffsetDegrees(headingOffsetDeg);
+    //DRIVETRAIN.setOperatorPerspectiveForAlliance();
+    //DRIVETRAIN.seedFieldCentricNow();
 
-    // Read stable rotation output polarity (no auto flip)
+    // Stable rotation output polarity (no auto flip)
     rotOutputInvert = SmartDashboard.getBoolean("Drive/InvertRotOutput", true);
   }
 
@@ -518,17 +516,10 @@ public class Robot extends TimedRobot {
     }
     if (CONTROLLER.getL2ButtonPressed()) ELEVATOR.setAlgaeMode(!ELEVATOR.inAlgaeMode());
 
-    // ===== Re-seed FOC on touchpad (simple reseed to current yaw) =====
-    if (CONTROLLER.getTouchpadButtonPressed()) {
-      boolean invYaw = SmartDashboard.getBoolean("Drive/InvertGyroYaw", false);
-      double yawDegRaw = IMU.getYaw().getValueAsDouble();
-      double yawUsedDeg = invYaw ? -yawDegRaw : yawDegRaw;
-      yawSeedRad = Math.toRadians(yawUsedDeg);
-    }
+    // ===== Re-seed FOC on touchpad (re-applies operator perspective, then seed) =====
+    if (CONTROLLER.getTouchpadButtonPressed()) { DRIVETRAIN.reseedFOCForAlliance(); }
 
-    // ===== Sticks → driver-frame commands =====
-    // WPILib: +X forward, +Y left, +CCW positive.
-    // PS5: forward = -LY, right = +LX, right-turn = +RX (CW from driver view).
+    // ===== Sticks → driver-frame commands (WPILib/CTRE: +X forward, +Y left, +CCW) =====
     double rawLX = CONTROLLER.getLeftX();
     double rawLY = CONTROLLER.getLeftY();
     double rawRX = CONTROLLER.getRightX();
@@ -537,7 +528,7 @@ public class Robot extends TimedRobot {
     double strafeRight = strafeLimiter.calculate( shapeInput(rawLX,  TRANS_DEADBAND, TRANS_EXPO) );
     double forward     = fwdLimiter.   calculate( shapeInput(-rawLY, TRANS_DEADBAND, TRANS_EXPO) );
 
-    // Turning: default = "stick right -> turn right (CW)" i.e. negative CCW
+    // Turning: stick right = CW (negative CCW)
     double omegaCCW = -rotLimiter.calculate( shapeInput(rawRX, ROT_DEADBAND, ROT_EXPO) ) * ROT_GAIN;
     if (SmartDashboard.getBoolean("Drive/InvertRotStick", false)) omegaCCW = -omegaCCW;
 
@@ -546,33 +537,14 @@ public class Robot extends TimedRobot {
     forward     = snapZero(forward);
     omegaCCW    = snapZero(omegaCCW);
 
-    // ===== Software field-centric transform (single rotation) =====
-    // Driver +Y = left (WPILib). Stick-right is +strafeRight ⇒ left = -strafeRight.
-    double left = -strafeRight;
+    // === CTRE Field-Centric only (no per-loop operator-perspective changes) ===
+    double left = strafeRight;       // keep your “positive strafe” choice
 
-    boolean isRed = DriverStation.getAlliance().isPresent()
-        && DriverStation.getAlliance().get() == Alliance.Red;
-    double headingOffsetDeg = SmartDashboard.getNumber("Drive/HeadingOffsetDeg", 0.0);
-    double phiRad = Math.toRadians((isRed ? 180.0 : 0.0) + headingOffsetDeg);  // driver perspective φ
-
-    boolean invYaw = SmartDashboard.getBoolean("Drive/InvertGyroYaw", false);
-    double yawDegRaw = IMU.getYaw().getValueAsDouble();
-    double yawUsedRad = Math.toRadians(invYaw ? -yawDegRaw : yawDegRaw);
-
-    // Effective angle: (current yaw - seed) - perspective
-    double thetaEff = (yawUsedRad - yawSeedRad) - phiRad;
-
-    // Rotate by -thetaEff (matrix below is R(-thetaEff))
-    double vx_robot =  forward * Math.cos(thetaEff) + left * Math.sin(thetaEff);
-    double vy_robot = -forward * Math.sin(thetaEff) + left * Math.cos(thetaEff);
-
-    // Use stable, dashboard-configured polarity (no jolt, no auto-flip)
     double omegaToSend = rotOutputInvert ? -omegaCCW : omegaCCW;
 
-    // Drive ROBOT-CENTRIC with our transformed velocities
-    boolean idle = (Math.abs(vx_robot) < IDLE_BAND && Math.abs(vy_robot) < IDLE_BAND && Math.abs(omegaToSend) < IDLE_BAND);
-    if (idle) DRIVETRAIN.drive(0, 0, 0, false);
-    else      DRIVETRAIN.drive(vx_robot, vy_robot, omegaToSend, false);
+    boolean idle = (Math.abs(forward) < IDLE_BAND && Math.abs(left) < IDLE_BAND && Math.abs(omegaToSend) < IDLE_BAND);
+    if (idle) DRIVETRAIN.drive(0, 0, 0, true);
+    else      DRIVETRAIN.drive(forward, left, omegaToSend, true);
 
     // ===== Climber quick controls (unchanged; trimmed) =====
     int pov = CONTROLLER.getPOV();
