@@ -551,7 +551,7 @@ public class Robot extends TimedRobot {
     omegaCCW    = snapZero(omegaCCW);
 
     // Keep your preferred strafe sense: positive = "right stick feels correct" at 0°/180°
-    double left = strafeRight;
+    double left = -strafeRight;
 
     double omegaToSend = rotOutputInvert ? -omegaCCW : omegaCCW;
 
