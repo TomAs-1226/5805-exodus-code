@@ -15,12 +15,25 @@ public final class Constants {
         57.67
     };
 
-    /**
-     * dont instantiate this guh..
-     * 
-     */
+    /** Extra height (in) for L4 when in algae mode */
+    public static final double ALGAE_L4_OFFSET_IN = 3.0;
 
-     public static final double ALGAE_L4_OFFSET_IN = 3.0;
+    // ===== Elevator motion constraints (rot/s and rot/s^2) =====
+    // Base profile (used for everything except Algae L4 boost)
+    public static final double ELEVATOR_BASE_MAX_VEL_ROT_PER_S  = 50.0;
+    public static final double ELEVATOR_BASE_MAX_ACC_ROT_PER_S2 = 100.0;
+
+    // Faster profile ONLY when in Algae mode going to L4 (+offset) – keeps velocity high
+    public static final double ALGAE_L4_MAX_VEL_ROT_PER_S       = 70.0;
+    public static final double ALGAE_L4_MAX_ACC_ROT_PER_S2      = 140.0;
+
+    // ===== Algae L4 pre-fire logic (shoot WHILE rising, near the very top) =====
+    /** Start shooting when we’re within this many inches of the L4+offset target */
+    public static final double ALGAE_L4_PREFIRE_WINDOW_IN       = 1.5;
+
+    /** How long to run the end-effector at full power to eject algae (seconds) */
+    public static final double ALGAE_L4_SHOOT_TIME_S            = 0.35;
+
     private Constants() {
         throw new UnsupportedOperationException("attempted to instantiate constants class!!");
     }
@@ -50,10 +63,10 @@ public final class Constants {
         BR_SWERVE(21),
         BR_ENCODER(4),
         PIGEON_2(28);
+
         public final int ID;
         Device(int deviceId) {
             this.ID = deviceId;
         }
     }
-
 }

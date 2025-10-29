@@ -1,6 +1,7 @@
 // FULL FILE — Robot.java
 package frc.robot;
 
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.PS5Controller;
 import edu.wpi.first.wpilibj.TimedRobot;
 import edu.wpi.first.wpilibj.Timer;
@@ -25,6 +26,7 @@ import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
 
 import com.ctre.phoenix6.hardware.Pigeon2;
+import edu.wpi.first.math.geometry.Rotation2d;
 
 public class Robot extends TimedRobot {
   private boolean doStartupWheelZero = false;
@@ -161,6 +163,7 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("Drive/CoR_X_in", 0.0);
     SmartDashboard.putNumber("Drive/CoR_Y_in", 0.0);
     SmartDashboard.putNumber("Drive/SideTrim", 0.0);
+    SmartDashboard.putBoolean("Drive/ReverseFieldForward", true); // start reversed if you want field-backwards feel
 
     // Optional hand-tuned forward nudge (e.g., +5 if physical forward is slightly off)
     SmartDashboard.putNumber("Drive/HeadingOffsetDeg", 0.0);
@@ -174,10 +177,12 @@ public class Robot extends TimedRobot {
 
     // Auto chooser
     autoChooser.setDefaultOption("Do Nothing", "do_nothing");
-    autoChooser.addOption("Leave", "leave");
-    autoChooser.addOption("Score L2 (backoff 6\")", "score_l2_backoff6");
-    autoChooser.addOption("Score L3", "score_l3");
-    autoChooser.addOption("Score L4 (safe L2-first)", "score_l4_safe");
+    //autoChooser.addOption("Leave", "leave");
+    //autoChooser.addOption("Score L2 (backoff 6\")", "score_l2_backoff6");
+    //autoChooser.addOption("Score L3", "score_l3");
+    //autoChooser.addOption("Score L4 (safe L2-first)", "score_l4_safe");
+    autoChooser.addOption("Forward 6 in", "fwd6");
+    autoChooser.addOption("L2 then Forward 6 in", "l2_then_fwd6");
 
     SmartDashboard.putData("Auto Selector", autoChooser);
     Shuffleboard.getTab("Autonomous")
@@ -206,9 +211,18 @@ public class Robot extends TimedRobot {
   @Override
   public void autonomousInit() {
     DRIVETRAIN.start();
-    DRIVETRAIN.setDriveMaxAll(0.60);
-    DRIVETRAIN.setSteerMaxAll(0.80);
+    DRIVETRAIN.setDriveMaxAll(0.90);
+    DRIVETRAIN.setSteerMaxAll(0.95);
+ // --- Force operator-forward = 180° in AUTO (ignore alliance entirely) ---
+final double headingOffsetDeg = SmartDashboard.getNumber("Drive/HeadingOffsetDeg", 0.0);
+double yawCalib = SmartDashboard.getNumber("Drive/YawCalibDeg", 0.0);
+if (SmartDashboard.getBoolean("Drive/Apply90Fix", false)) yawCalib += 90.0;
 
+// No alliance helper here; just set a fixed 180° + your trims, then seed
+DRIVETRAIN.setDriverForwardOffsetDegrees(180.0 + headingOffsetDeg + yawCalib);
+DRIVETRAIN.seedFieldCentricNow();
+
+    autoSelected = autoChooser.getSelected();
     odomYIn = 0.0;
     segStartYIn = 0.0;
     segStartYInBack = 0.0;
@@ -241,9 +255,86 @@ public class Robot extends TimedRobot {
       case "score_l2_backoff6":runScoreL2_RaiseThenGo_Eject_Backoff6(); break;
       case "score_l3":         runScore_Lx(Constants.ELEVATOR_HEIGHTS[3], getTargetL3In(), L3_TOL_IN, L3_RAISE_TIMEOUT_S); break;
       case "score_l4_safe":    runScore_L4_Safe(); break;
+      case "fwd6":            runForward6In(); break;
+      case "l2_then_fwd6":    runRaiseL2_ThenForward6In(); break;
       default:                 DRIVETRAIN.drive(0,0,0,true); break;
     }
   }
+  // ==== Simple forward 6 inches (auto) ====
+private void runForward6In() {
+  final double driveTargetIn = 20.0;          // fixed 6 inches
+  final double maxSegmentTimeS = 4;        // simple safety timeout
+
+  switch (autoState) {
+    case INIT:
+      DRIVETRAIN.drive(0,0,0,true);
+      segStartYIn = odomYIn;
+      headingHoldStart();
+      autoTimer.reset(); autoTimer.start();
+      autoState = AutoState.MOVE_FWD;
+      break;
+
+    case MOVE_FWD:
+      currentFwdCmd = getMoveCmd(); // reuse your dashboard-tunable forward command
+      DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
+      boolean reached = Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn);
+      boolean timedOut = autoTimer.get() > maxSegmentTimeS;
+      if (reached || timedOut) {
+        DRIVETRAIN.drive(0,0,0,true);
+        headingHoldStop();
+        autoState = AutoState.DONE;
+      }
+      break;
+
+    default:
+      DRIVETRAIN.drive(0,0,0,true);
+      break;
+  }
+}
+
+// ==== Raise to L2, then forward 6 inches (auto) ====
+private void runRaiseL2_ThenForward6In() {
+  final double l2HeightIn      = Constants.ELEVATOR_HEIGHTS[2];
+  final double driveTargetIn   = 11;        // fixed 6 inches
+  final double raiseTimeoutS   = L2_RAISE_TIMEOUT_S;  // you already define this
+  final double tolIn           = L2_TOL_IN;           // you already define this
+  final double maxSegmentTimeS = 20;                 // safety for the drive segment
+
+  switch (autoState) {
+    case INIT:
+      DRIVETRAIN.drive(0,0,0,true);
+      ELEVATOR.setHeight(l2HeightIn);              // start raising
+      autoTimer.reset(); autoTimer.start();
+      autoState = AutoState.RAISE_FIRST;
+      break;
+
+    case RAISE_FIRST:
+      // proceed once we're at L2 or we time out
+      if (ELEVATOR.atHeightInches(l2HeightIn, tolIn) || autoTimer.get() > raiseTimeoutS) {
+        segStartYIn = odomYIn;
+        headingHoldStart();
+        autoTimer.reset(); autoTimer.start();
+        autoState = AutoState.MOVE_FWD;
+      }
+      break;
+
+    case MOVE_FWD:
+      currentFwdCmd = getMoveCmd();
+      DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
+      boolean reached = Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn);
+      boolean timedOut = autoTimer.get() > maxSegmentTimeS;
+      if (reached || timedOut) {
+        DRIVETRAIN.drive(0,0,0,true);
+        headingHoldStop();
+        autoState = AutoState.DONE;
+      }
+      break;
+
+    default:
+      DRIVETRAIN.drive(0,0,0,true);
+      break;
+  }
+}
 
   // ==== Leave straight (auto) ====
   private void runLeaveForward() {
@@ -459,7 +550,7 @@ public class Robot extends TimedRobot {
     try { DRIVETRAIN.pointWheelsForward(); } catch (Exception ignored) {}
     doStartupWheelZero = true;
     startupWheelZeroUntilSec = Timer.getFPGATimestamp() + 0.40;
-
+  // = full rotational speed (rad/s)
     // Legacy record only
     yawSeedRad = IMU.getRotation2d().getRadians();
 
@@ -468,11 +559,16 @@ public class Robot extends TimedRobot {
     double yawCalib = SmartDashboard.getNumber("Drive/YawCalibDeg", 0.0);
     if (SmartDashboard.getBoolean("Drive/Apply90Fix", false)) yawCalib += 90.0;
 
-    DRIVETRAIN.setDriverForwardOffsetDegrees(headingOffsetDeg + yawCalib);
-    DRIVETRAIN.setOperatorPerspectiveForAlliance(); // Blue=0°, Red=180° plus our offsets
-    DRIVETRAIN.seedFieldCentricNow();               // Lock forward reference (no per-loop changes)
+    // Make final operator-forward = 180° on BOTH alliances (plus your trims) 
+    boolean isRed = DriverStation.getAlliance().isPresent()
+    && DriverStation.getAlliance().get() == DriverStation.Alliance.Red;
+double baseDeg = isRed ? 180.0 : 0.0;                 // Blue=0°, Red=180° (CTRE convention)
+double desiredFwdDeg = 0.0 + headingOffsetDeg + yawCalib; // robot-forward + your trims
+DRIVETRAIN.setDriverForwardOffsetDegrees(desiredFwdDeg - baseDeg);
+DRIVETRAIN.setOperatorPerspectiveForAlliance();       // apply alliance perspective
+DRIVETRAIN.seedFieldCentricNow();                     // Seed relative to operator perspective
   }
-
+  
   @Override
   public void teleopPeriodic() {
     if (doStartupWheelZero) {
@@ -513,10 +609,16 @@ public class Robot extends TimedRobot {
       final double headingOffsetDeg = SmartDashboard.getNumber("Drive/HeadingOffsetDeg", 0.0);
       double yawCalib = SmartDashboard.getNumber("Drive/YawCalibDeg", 0.0);
       if (SmartDashboard.getBoolean("Drive/Apply90Fix", false)) yawCalib += 90.0;
-      DRIVETRAIN.setDriverForwardOffsetDegrees(headingOffsetDeg + yawCalib);
-      DRIVETRAIN.setOperatorPerspectiveForAlliance();
-      DRIVETRAIN.seedFieldCentricNow();
+// NEW: same math as teleopInit so reseed behaves identically
+boolean isRed = DriverStation.getAlliance().isPresent()
+    && DriverStation.getAlliance().get() == DriverStation.Alliance.Red;
+double baseDeg = isRed ? 180.0 : 0.0;
+double desiredFwdDeg = 0.0 + headingOffsetDeg + yawCalib;
+DRIVETRAIN.setDriverForwardOffsetDegrees(desiredFwdDeg - baseDeg);
+DRIVETRAIN.setOperatorPerspectiveForAlliance();
+DRIVETRAIN.seedFieldCentricNow();
     }
+    
 
     // ===== Sticks → driver-frame commands (WPILib/CTRE: +X forward, +Y left, +CCW) =====
     double rawLX = CONTROLLER.getLeftX();
@@ -526,6 +628,10 @@ public class Robot extends TimedRobot {
     // shape -> slew
     double strafeRight = strafeLimiter.calculate( shapeInput(rawLX,  TRANS_DEADBAND, TRANS_EXPO) );
     double forward     = fwdLimiter.   calculate( shapeInput(-rawLY, TRANS_DEADBAND, TRANS_EXPO) );
+
+    if (SmartDashboard.getBoolean("Drive/ReverseFieldForward", false)) {
+      forward = -forward;
+    }
 
     // Turning: RIGHT stick -> CW. CTRE expects +CCW, so negate ONCE.
     double omegaCCW = -rotLimiter.calculate( shapeInput(rawRX, ROT_DEADBAND, ROT_EXPO) ) * ROT_GAIN;

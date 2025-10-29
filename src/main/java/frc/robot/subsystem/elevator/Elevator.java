@@ -23,6 +23,7 @@ import frc.robot.util.RobotMath;
 // >>> imports already present <<<
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard; // DS keys
 import edu.wpi.first.math.MathUtil;                           // clamp()
+import edu.wpi.first.wpilibj.Timer;                           // <<< NEW
 
 /**
  * blah blah blah elevator it does elevator things (it elevates, duh?)
@@ -60,6 +61,9 @@ public final class Elevator extends AbstractSubsystem {
     private State targetState; 
     /** incase you need to be higher up */
     private double heightOffset;
+
+    // <<< NEW: timer to bound algae auto-fire duration >>>
+    private final Timer algaeFireTimer = new Timer();
 
     public boolean atHeightInches(double inches, double tolInches) {
         return Math.abs(getHeight() - inches) <= Math.abs(tolInches);
@@ -106,7 +110,15 @@ public final class Elevator extends AbstractSubsystem {
             .withSlot(0)
             .withEnableFOC(true);
         this.FEED_CTRL = new ElevatorFeedforward(0.4, 0.16, 1.0/9.4);
-        this.PROFILE = new TrapezoidProfile(new Constraints(50, 100));
+
+        // <<< EDIT: use base constraints from Constants instead of hardcoded 50/100 >>>
+        this.PROFILE = new TrapezoidProfile(
+            new Constraints(
+                Constants.ELEVATOR_BASE_MAX_VEL_ROT_PER_S,
+                Constants.ELEVATOR_BASE_MAX_ACC_ROT_PER_S2
+            )
+        );
+
         this.currentState = new State();
         this.targetState = new State();
         this.END_EFFECTOR = new KrakenX60(Constants.Device.ELEVATOR_END_EFFECTOR.ID);
@@ -125,7 +137,6 @@ public final class Elevator extends AbstractSubsystem {
         endEffectorConfig.MotorOutput.NeutralMode = NeutralModeValue.Brake;
         CORAL_INTAKE.getConfigurator().apply(intakeConfig);
         END_EFFECTOR.getConfigurator().apply(endEffectorConfig);
-        
     }
 
     /**
@@ -230,6 +241,17 @@ public final class Elevator extends AbstractSubsystem {
         return RobotMath.fEquals(targetState.position, getRotationsFromDistance(inches));
     }
 
+    // <<< NEW: L4+offset target height (in) and equality test on targetState >>>
+    private double getAlgaeL4HeightIn() {
+        return Constants.ELEVATOR_HEIGHTS[4] + Constants.ALGAE_L4_OFFSET_IN;
+    }
+    private boolean isTargetL4Algae() {
+        return RobotMath.fEquals(
+            targetState.position,
+            getRotationsFromDistance(getAlgaeL4HeightIn())
+        );
+    }
+
     // existing L1-only tunable accessor (+ clamp)
     private double getShootPowerL1() {
         double raw = SmartDashboard.getNumber("Elevator/ShootPowerL1", DEFAULT_SHOOT_POWER_L1);
@@ -248,6 +270,31 @@ public final class Elevator extends AbstractSubsystem {
 
     @Override
     public void update() {
+
+        // ====== PRE-FIRE WHILE RISING (no settle) — only when targeting L4+offset in algae mode ======
+        if (intakeAlgae && isTargetL4Algae()) {
+            double remainingIn = getAlgaeL4HeightIn() - getHeight(); // >0 while below top
+            if (remainingIn <= Constants.ALGAE_L4_PREFIRE_WINDOW_IN) {
+                if (!shouldShoot) {
+                    shouldShoot = true;              // start shooting while still moving up
+                    algaeFireTimer.stop();           // clean
+                    algaeFireTimer.reset();
+                    algaeFireTimer.start();          // bound shot time
+                }
+            }
+            // Stop the shot after configured duration
+            if (shouldShoot && algaeFireTimer.get() >= Constants.ALGAE_L4_SHOOT_TIME_S) {
+                shouldShoot = false;
+                algaeFireTimer.stop();
+                algaeFireTimer.reset();
+            }
+        } else {
+            // Not in the Algae L4 one-shot context: just reset the timer; do NOT force shouldShoot false
+            algaeFireTimer.stop();
+            algaeFireTimer.reset();
+        }
+        // ====== END pre-fire block ======
+
         if (!intakeAlgae) {
             if (isCoralInIntake()) {
                 CORAL_INTAKE.set(0.2);
@@ -303,7 +350,7 @@ public final class Elevator extends AbstractSubsystem {
                 shouldShoot = false;
             }
         } else {
-            // algae mode unchanged
+            // algae mode unchanged (shooting behavior governed by shouldShoot from pre-fire block)
             CORAL_INTAKE.set(0.0);
             if (shouldShoot) {
                 END_EFFECTOR.set(1.0);
@@ -313,7 +360,16 @@ public final class Elevator extends AbstractSubsystem {
                 END_EFFECTOR.set(-0.2);
             }
         }
-        State nextState = PROFILE.calculate(0.02, currentState, targetState);
+
+        // <<< EDIT: Dynamic constraints — use faster profile ONLY for Algae L4 moves >>>
+        TrapezoidProfile activeProfile = (intakeAlgae && isTargetL4Algae())
+            ? new TrapezoidProfile(new Constraints(
+                    Constants.ALGAE_L4_MAX_VEL_ROT_PER_S,
+                    Constants.ALGAE_L4_MAX_ACC_ROT_PER_S2))
+            : PROFILE;
+
+        State nextState = activeProfile.calculate(0.02, currentState, targetState);
+
         MOTOR_LEFT.setControl(
             CONTROL.withPosition(nextState.position)
                 .withFeedForward(FEED_CTRL
@@ -327,5 +383,4 @@ public final class Elevator extends AbstractSubsystem {
     public void stop() {
         setHeight(getHeight());
     }
-
 }
