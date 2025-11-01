@@ -169,8 +169,7 @@ private static final double DEFAULT_BUDDY_BACK_IN              = 48.0; // back ~
 
   // Legacy record (not used for transforms now)
   private double yawSeedRad = 0.0;
-  private boolean alignEnabled = false;   // latched by L1 toggle
-  private boolean alignDriving = false;   // true only while we're actually overriding drive this loop
+
 
   public Robot() {
     this.COMSYS     = new CommandSystem(this);
@@ -200,7 +199,7 @@ private static final double DEFAULT_BUDDY_BACK_IN              = 48.0; // back ~
     // Auto chooser
     autoChooser.setDefaultOption("Do Nothing", "do_nothing");
     //autoChooser.addOption("Leave", "leave");
-    //autoChooser.addOption("Score L2 (backoff 6\")", "score_l2_backoff6");
+    autoChooser.addOption("Score L2 (backoff 6\")", "score_l2_backoff6");
     //autoChooser.addOption("Score L3", "score_l3");
     //autoChooser.addOption("Score L4 (safe L2-first)", "score_l4_safe");
     autoChooser.addOption("Forward 6 in", "fwd6");
@@ -217,8 +216,8 @@ private static final double DEFAULT_BUDDY_BACK_IN              = 48.0; // back ~
     //SmartDashboard.putNumber("Auto/MoveCmd",     DEFAULT_MOVE_CMD);
     //SmartDashboard.putNumber("Auto/RaiseDelayS", DEFAULT_RAISE_DELAY_S);
 
-    //SmartDashboard.putNumber("Auto/TargetDistL2In", DEFAULT_TARGET_DIST_L2_IN);
-    //SmartDashboard.putNumber("Auto/BackoffL2In",    DEFAULT_BACKOFF_L2_IN);
+    SmartDashboard.putNumber("Auto/TargetDistL2In", DEFAULT_TARGET_DIST_L2_IN);
+    SmartDashboard.putNumber("Auto/BackoffL2In",    DEFAULT_BACKOFF_L2_IN);
     //SmartDashboard.putNumber("Auto/ShotPowerScaleL2", DEFAULT_SHOT_SCALE_L2);
 
     //SmartDashboard.putNumber("Auto/TargetDistL3In", DEFAULT_TARGET_DIST_L3_IN);
@@ -633,301 +632,170 @@ private void runRaiseL2_ThenForward6In() {
     }
   }
 
-@Override
-public void teleopInit() {
-    // keep the wheel zero behavior you already had
-    try { DRIVETRAIN.pointWheelsForward(); } catch (Exception ignored) {}
-    doStartupWheelZero = true;
-    startupWheelZeroUntilSec = Timer.getFPGATimestamp() + 0.40;
-    DRIVETRAIN.setDriveMaxAll(0.8);
-    DRIVETRAIN.setSteerMaxAll(0.8);
-
-    // record yaw at enable (you were already doing this)
-    yawSeedRad = IMU.getRotation2d().getRadians();
-
-    // ---- perspective / field-centric setup ----
-    final double headingOffsetDeg = SmartDashboard.getNumber("Drive/HeadingOffsetDeg", 0.0);
-    double yawCalib = SmartDashboard.getNumber("Drive/YawCalibDeg", 0.0);
-    if (SmartDashboard.getBoolean("Drive/Apply90Fix", false)) {
-        yawCalib += 90.0;
-    }
-
-    // 1. tell the drivetrain "this is forward right now"
-    DRIVETRAIN.setDriverForwardOffsetDegrees(headingOffsetDeg + yawCalib);
-
-    // 2. sync the driver perspective (this is what fixes LEFT/RIGHT)
-    //    this is the same call you make in touchpad reseed
-    DRIVETRAIN.setOperatorPerspectiveForAlliance();
-
-    // 3. now lock that into the field-centric math
-    DRIVETRAIN.seedFieldCentricNow();
-    LimelightHelpers.setPipelineIndex(LL_NAME, LL_PIPELINE_INDEX);
-
-    // 4. startup behavior:
-    //    we still want pushing stick forward to drive TOWARD the driver station at the start,
-    //    so keep using your software flip for forward/back until you manually reseed
-    SmartDashboard.putBoolean("Drive/ReverseFieldForward", true);
-    alignEnabled = false;
-    alignDriving = false;
-    ALIGN.disable();
-    SmartDashboard.putBoolean("LL/AlignActive", false);
-    System.out.println("[LL Align] teleopInit(): align disabled");
-}
-
-@Override
-public void teleopPeriodic() {
-    // ===== One-shot wheel zero on enable =====
-    if (doStartupWheelZero) {
-        if (Timer.getFPGATimestamp() < startupWheelZeroUntilSec) {
-            DRIVETRAIN.pointWheelsForward();
-        } else {
-            doStartupWheelZero = false;
-        }
-    }
-
-
-double firstID = -1.0;
-
-//LimelightHelpers.LimelightResults llr_debug = LimelightHelpers.getLatestResults(LL_NAME);
-//if (llr_debug != null 
-    //&& llr_debug.targets_Fiducials != null 
-    //&& llr_debug.targets_Fiducials.length > 0) {
-
-    //firstID = llr_debug.targets_Fiducials[0].fiducialID;
-//}
-
-// push what we saw to dashboard so you can confirm it's actually reading the tag #
-//SmartDashboard.putNumber("LL/FirstTagID", firstID);
-
-// this is how you check "are we on tag 10"
-boolean seesTag10 = (int)firstID == 10;
-//SmartDashboard.putBoolean("LL/SeesTag10", seesTag10);
-//System.out.println("[LL DEBUG] seesTag10=" + seesTag10 + " firstID=" + firstID);
-
-
-    // ===== Elevator / Climber (unchanged) =====
-    if (CONTROLLER.getCrossButtonPressed()) {
-        ELEVATOR.setHeight(Constants.ELEVATOR_HEIGHTS[1]);
-    } else if (CONTROLLER.getSquareButtonPressed()) {
-        double h = Constants.ELEVATOR_HEIGHTS[2];
-        if (ELEVATOR.inAlgaeMode()) h += 2.0;
-        ELEVATOR.setHeight(h);
-    } else if (CONTROLLER.getCircleButtonPressed()) {
-        double h = Constants.ELEVATOR_HEIGHTS[3];
-        if (ELEVATOR.inAlgaeMode()) h += 1.0;
-        ELEVATOR.setHeight(h);
-    } else if (CONTROLLER.getTriangleButtonPressed()) {
-        double h = Constants.ELEVATOR_HEIGHTS[4];
-        if (ELEVATOR.inAlgaeMode()) h += Constants.ALGAE_L4_OFFSET_IN;
-        ELEVATOR.setHeight(h);
-    } else if (CONTROLLER.getPOV() == 90) {
-        ELEVATOR.setHeight(Constants.ELEVATOR_HEIGHTS[0]);
-    }
-
-    if (CONTROLLER.getR2ButtonPressed()) {
-        if (!ELEVATOR.inAlgaeMode()) {
-            ELEVATOR.ejectCoral();
-        } else {
-            ELEVATOR.setEjection(!ELEVATOR.isEjecting());
-        }
-    }
-    if (CONTROLLER.getL2ButtonPressed()) {
-        ELEVATOR.setAlgaeMode(!ELEVATOR.inAlgaeMode());
-    }
-        // ===== L1 toggles Limelight strafe-align mode (ID10 only) =====
-        if (CONTROLLER.getL1ButtonPressed()) {
-          alignEnabled = !alignEnabled;
-  
-          if (alignEnabled) {
-              ALIGN.enable();
-              System.out.println("[LL Align] ENABLED by driver (L1)");
+  @Override
+  public void teleopPeriodic() {
+      // ===== One-shot wheel zero on enable =====
+      if (doStartupWheelZero) {
+          if (Timer.getFPGATimestamp() < startupWheelZeroUntilSec) {
+              DRIVETRAIN.pointWheelsForward();
           } else {
-              ALIGN.disable();
-              System.out.println("[LL Align] DISABLED by driver (L1)");
-          }
-  
-          SmartDashboard.putBoolean("LL/AlignActive", alignEnabled);
-      }
-  
-
-    // ===== Touchpad = go back to NORMAL field-centric =====
-// ===== Touchpad = re-orient field-centric NOW (make current facing = 0) =====
-    if (CONTROLLER.getTouchpadButtonPressed()) {
-  // pull the tunable offsets from Shuffleboard
-      final double headingOffsetDeg = SmartDashboard.getNumber("Drive/HeadingOffsetDeg", 0.0);
-      double yawCalib = SmartDashboard.getNumber("Drive/YawCalibDeg", 0.0);
-      if (SmartDashboard.getBoolean("Drive/Apply90Fix", false)) {
-          yawCalib += 90.0;
-    }
-
-  // 1. Tell drivetrain "THIS direction is forward now"
-      DRIVETRAIN.setDriverForwardOffsetDegrees(headingOffsetDeg + yawCalib);
-
-  // 2. Re-apply alliance perspective so that
-  //    - pushing stick forward drives AWAY from our driver station
-  //    - left stick left is field-left, etc.
-      DRIVETRAIN.setOperatorPerspectiveForAlliance();
-
-  // 3. Lock that into CTRE's field-centric transform
-    DRIVETRAIN.seedFieldCentricNow();
-
-  // 4. We're back to normal field-oriented driving,
-  //    so kill the temporary flip that was making forward pull toward DS
-      SmartDashboard.putBoolean("Drive/ReverseFieldForward", false);
-
-      System.out.println("[Drive] Touchpad reseed: field-centric reset & ReverseFieldForward=false");
-
-    }
-
-    // ===== Sticks → driver-frame commands =====
-    // ===== Sticks → driver-frame commands =====
-    double rawLX = CONTROLLER.getLeftX();
-    double rawLY = CONTROLLER.getLeftY();
-    double rawRX = CONTROLLER.getRightX();
-
-    // shape -> slew (manual driver intent)
-    double shapedStrafeRight = strafeLimiter.calculate(
-        shapeInput(rawLX,  TRANS_DEADBAND, TRANS_EXPO)
-    );
-    double shapedForwardCmd = fwdLimiter.calculate(
-        shapeInput(-rawLY, TRANS_DEADBAND, TRANS_EXPO)
-    );
-
-    // WPILib/CTRE convention: +X = forward, +Y = left. We convert to "left".
-    double manualLeftCmd = -shapedStrafeRight; // right on stick = negative left
-    double manualForwardCmd = shapedForwardCmd;
-
-    // Startup flip logic (your 180° rotate so forward stick pulls robot toward DS)
-    if (SmartDashboard.getBoolean("Drive/ReverseFieldForward", false)) {
-        manualForwardCmd = -manualForwardCmd;
-        manualLeftCmd    = -manualLeftCmd;
-    }
-
-    // Turning: driver pushes stick right = CW, but drivetrain expects +CCW.
-    double manualOmegaCCW = -rotLimiter.calculate(
-        shapeInput(rawRX, ROT_DEADBAND, ROT_EXPO)
-    ) * ROT_GAIN;
-
-    if (SmartDashboard.getBoolean("Drive/InvertRotStick", false)) {
-        manualOmegaCCW = -manualOmegaCCW; // driver pref
-    }
-
-    // ===== Limelight auto-align override (strafe + rotate ONLY) =====
-    // default: we assume normal driver control
-    double finalForwardCmd = manualForwardCmd;
-    double finalLeftCmd    = manualLeftCmd;
-    double finalOmegaCCW   = manualOmegaCCW;
-    boolean driveFieldOriented = true; // normally field-centric
-    alignDriving = false;
-
-    if (alignEnabled) {
-
-      // Get one fresh frame from Limelight
-      LimelightHelpers.LimelightResults llr = LimelightHelpers.getLatestResults(LL_NAME);
-  
-  
-      if (llr != null && llr.targets_Fiducials != null) {
-          for (LimelightHelpers.LimelightTarget_Fiducial t : llr.targets_Fiducials) {
-              if (t.fiducialID == 10) { // only care about tag #10
-                  seesTag10 = true;
-                  break;
-              }
+              doStartupWheelZero = false;
           }
       }
   
-      boolean tvOk = LimelightHelpers.getTV(LL_NAME); // Limelight says "valid target right now"
+      // ===== Elevator / Climber button mapping =====
+      if (CONTROLLER.getCrossButtonPressed()) {
+          ELEVATOR.setHeight(Constants.ELEVATOR_HEIGHTS[1]);
+      } else if (CONTROLLER.getSquareButtonPressed()) {
+          double h = Constants.ELEVATOR_HEIGHTS[2];
+          if (ELEVATOR.inAlgaeMode()) h += 2.0;
+          ELEVATOR.setHeight(h);
+      } else if (CONTROLLER.getCircleButtonPressed()) {
+          double h = Constants.ELEVATOR_HEIGHTS[3];
+          if (ELEVATOR.inAlgaeMode()) h += 1.0;
+          ELEVATOR.setHeight(h);
+      } else if (CONTROLLER.getTriangleButtonPressed()) {
+          double h = Constants.ELEVATOR_HEIGHTS[4];
+          if (ELEVATOR.inAlgaeMode()) h += Constants.ALGAE_L4_OFFSET_IN;
+          ELEVATOR.setHeight(h);
+      } else if (CONTROLLER.getPOV() == 90) {
+          // POV right = stow
+          ELEVATOR.setHeight(Constants.ELEVATOR_HEIGHTS[0]);
+      }
   
-      if (seesTag10 && tvOk) {
-  
-          // Ask our alignment helper for robot-relative strafe + turn
-          AutoAlignLL.Output llOut = ALIGN.update();
-  
-          if (llOut.hasTarget) {
-              // AutoAlignLL contract:
-              //   llOut.strafe  = +left / -right (ROBOT SPACE)
-              //   llOut.omega   = +CCW / -CW (ROBOT SPACE)
-              // We intentionally do NOT command forward/back during align
-              finalForwardCmd   = 0.0;
-              finalLeftCmd      = llOut.strafe;
-              finalOmegaCCW     = llOut.omega;
-  
-              // robot-centric so "left" really means robot-left
-              driveFieldOriented = false;
-              alignDriving = true;
-  
-              System.out.println(
-                  "[LL Align] tag10 lock | strafe(left+)= " + finalLeftCmd +
-                  " omegaCCW= " + finalOmegaCCW
-              );
+      if (CONTROLLER.getR2ButtonPressed()) {
+          if (!ELEVATOR.inAlgaeMode()) {
+              // coral score request
+              ELEVATOR.ejectCoral();
           } else {
-              System.out.println("[LL Align] tag10 seen, ALIGN.update() no stable pose");
+              // algae toggle spit/stop
+              ELEVATOR.setEjection(!ELEVATOR.isEjecting());
           }
+      }
+  
+      if (CONTROLLER.getL2ButtonPressed()) {
+          // toggle algae mode
+          ELEVATOR.setAlgaeMode(!ELEVATOR.inAlgaeMode());
+      }
+  
+      // ===== Touchpad = reseed field-centric (make current facing "forward") =====
+      if (CONTROLLER.getTouchpadButtonPressed()) {
+          final double headingOffsetDeg = SmartDashboard.getNumber("Drive/HeadingOffsetDeg", 0.0);
+          double yawCalib = SmartDashboard.getNumber("Drive/YawCalibDeg", 0.0);
+          if (SmartDashboard.getBoolean("Drive/Apply90Fix", false)) {
+              yawCalib += 90.0;
+          }
+  
+          // 1. tell drivetrain "THIS direction is forward now"
+          DRIVETRAIN.setDriverForwardOffsetDegrees(headingOffsetDeg + yawCalib);
+  
+          // 2. re-apply alliance perspective
+          DRIVETRAIN.setOperatorPerspectiveForAlliance();
+  
+          // 3. lock into CTRE's field-centric transform
+          DRIVETRAIN.seedFieldCentricNow();
+  
+          // 4. we're now normal field-oriented, so stop flipping forward/back
+          SmartDashboard.putBoolean("Drive/ReverseFieldForward", false);
+  
+          System.out.println("[Drive] Touchpad reseed: field-centric reset & ReverseFieldForward=false");
+      }
+  
+      // ===== Sticks → driver-frame commands =====
+      double rawLX = CONTROLLER.getLeftX();
+      double rawLY = CONTROLLER.getLeftY();
+      double rawRX = CONTROLLER.getRightX();
+  
+      // shape -> slew filter
+      double shapedStrafeRight = strafeLimiter.calculate(
+          shapeInput(rawLX,  TRANS_DEADBAND, TRANS_EXPO)
+      );
+      double shapedForwardCmd = fwdLimiter.calculate(
+          shapeInput(-rawLY, TRANS_DEADBAND, TRANS_EXPO)
+      );
+  
+      // WPILib/CTRE convention: +X = fwd, +Y = left.
+      double manualLeftCmd    = -shapedStrafeRight; // pushing stick right = robot should go right
+      double manualForwardCmd =  shapedForwardCmd;
+  
+      // startup flip so forward stick can pull robot toward DS until reseed
+      if (SmartDashboard.getBoolean("Drive/ReverseFieldForward", false)) {
+          manualForwardCmd = -manualForwardCmd;
+          manualLeftCmd    = -manualLeftCmd;
+      }
+  
+      // rotation: driver stick right is CW, drivetrain wants +CCW
+      double manualOmegaCCW = -rotLimiter.calculate(
+          shapeInput(rawRX, ROT_DEADBAND, ROT_EXPO)
+      ) * ROT_GAIN;
+  
+      if (SmartDashboard.getBoolean("Drive/InvertRotStick", false)) {
+          manualOmegaCCW = -manualOmegaCCW;
+      }
+  
+      // final commands (no Limelight override at all)
+      double finalForwardCmd   = manualForwardCmd;
+      double finalLeftCmd      = manualLeftCmd;
+      double finalOmegaCCW     = manualOmegaCCW;
+      boolean driveFieldOriented = true; // always field-oriented now
+  
+      // clean tiny noise
+      double deadbandForSnap = 0.04;
+      finalForwardCmd = snapZeroCustom(finalForwardCmd, deadbandForSnap);
+      finalLeftCmd    = snapZeroCustom(finalLeftCmd,    deadbandForSnap);
+      finalOmegaCCW   = snapZeroCustom(finalOmegaCCW,   deadbandForSnap);
+  
+      SmartDashboard.putNumber("Drive/OmegaCCW", finalOmegaCCW);
+  
+      boolean idle = (Math.abs(finalForwardCmd)  < IDLE_BAND &&
+                      Math.abs(finalLeftCmd)     < IDLE_BAND &&
+                      Math.abs(finalOmegaCCW)    < IDLE_BAND);
+  
+      if (idle) {
+          DRIVETRAIN.drive(0, 0, 0, true);
       } else {
-          System.out.println("[LL Align] inactive (no tag10 OR tv=false)");
+          DRIVETRAIN.drive(finalForwardCmd, finalLeftCmd, finalOmegaCCW, driveFieldOriented);
       }
+  
+      // ===== Climber quick controls =====
+      int pov = CONTROLLER.getPOV();
+      boolean downHeld  = (pov == 180);
+      boolean upHeld    = (pov ==   0);
+      boolean leftEdge  = (pov == 270) && (lastPOV != 270);
+      if (leftEdge) {
+          boolean hToggleActive = SmartDashboard.getBoolean("Climb/HToggleActive", false);
+          hToggleActive = !hToggleActive;
+          SmartDashboard.putBoolean("Climb/HToggleActive", hToggleActive);
+          if (hToggleActive) {
+              CLIMBER.runHPercent(SmartDashboard.getNumber("Climb/HTogglePercent", -0.5));
+          } else {
+              CLIMBER.stopH();
+          }
+      }
+  
+      if (phase == Phase.IDLE) {
+          double base = Math.abs(SmartDashboard.getNumber("Climb/ManualJogPercent",  0.14));
+          double outM = Math.abs(SmartDashboard.getNumber("Climb/ManualJogOutMult",  3.0));
+          double inM  = Math.abs(SmartDashboard.getNumber("Climb/ManualJogInMult",   3.0));
+          double jogOut = Math.min(1.0, base * outM);
+          double jogIn  = Math.min(1.0, base * inM);
+  
+          if (upHeld ^ downHeld) {
+              CLIMBER.stopH();
+              if (upHeld)  {
+                  CLIMBER.runGBPercent(-homeDirSign * jogOut);
+              } else {
+                  CLIMBER.runGBPercent(+homeDirSign * jogIn);
+              }
+          } else {
+              CLIMBER.stopGB();
+          }
+      }
+  
+      lastPOV = pov;
   }
   
-
-    // Use a smaller deadband if alignment is in control so we don't kill tiny corrections.
-    double deadbandForSnap = alignDriving ? 0.01 : 0.04;
-
-    finalForwardCmd = snapZeroCustom(finalForwardCmd, deadbandForSnap);
-    finalLeftCmd    = snapZeroCustom(finalLeftCmd,    deadbandForSnap);
-    finalOmegaCCW   = snapZeroCustom(finalOmegaCCW,   deadbandForSnap);
-
-    SmartDashboard.putNumber("Drive/OmegaCCW", finalOmegaCCW);
-    SmartDashboard.putBoolean("LL/AlignDrivingNow", alignDriving);
-
-    boolean idle = (Math.abs(finalForwardCmd)  < IDLE_BAND &&
-                    Math.abs(finalLeftCmd)     < IDLE_BAND &&
-                    Math.abs(finalOmegaCCW)    < IDLE_BAND);
-
-    if (idle) {
-        DRIVETRAIN.drive(0, 0, 0, true);
-    } else {
-        // If we're aligning, we already decided driveFieldOriented = false (robot-centric).
-        // Otherwise we keep true (field-relative).
-        DRIVETRAIN.drive(finalForwardCmd, finalLeftCmd, finalOmegaCCW, driveFieldOriented);
-    }
-
-    // ===== Climber quick controls (unchanged) =====
-    int pov = CONTROLLER.getPOV();
-    boolean downHeld  = (pov == 180);
-    boolean upHeld    = (pov ==   0);
-    boolean leftEdge  = (pov == 270) && (lastPOV != 270);
-    if (leftEdge) {
-        boolean hToggleActive = SmartDashboard.getBoolean("Climb/HToggleActive", false);
-        hToggleActive = !hToggleActive;
-        SmartDashboard.putBoolean("Climb/HToggleActive", hToggleActive);
-        if (hToggleActive) {
-            CLIMBER.runHPercent(SmartDashboard.getNumber("Climb/HTogglePercent", -0.5));
-        } else {
-            CLIMBER.stopH();
-        }
-    }
-
-    if (phase == Phase.IDLE) {
-        double base = Math.abs(SmartDashboard.getNumber("Climb/ManualJogPercent",  0.14));
-        double outM = Math.abs(SmartDashboard.getNumber("Climb/ManualJogOutMult",  3.0));
-        double inM  = Math.abs(SmartDashboard.getNumber("Climb/ManualJogInMult",   3.0));
-        double jogOut = Math.min(1.0, base * outM);
-        double jogIn  = Math.min(1.0, base * inM);
-
-        if (upHeld ^ downHeld) {
-            CLIMBER.stopH();
-            if (upHeld)  {
-                CLIMBER.runGBPercent(-homeDirSign * jogOut);
-            } else {
-                CLIMBER.runGBPercent(+homeDirSign * jogIn);
-            }
-        } else {
-            CLIMBER.stopGB();
-        }
-    }
-
-    lastPOV = pov;
-  }
-
+  
 
   @Override
   public void disabledInit() {
