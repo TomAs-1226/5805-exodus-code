@@ -97,11 +97,11 @@ public class SwerveDrivetrain extends AbstractSubsystem {
 
   public void setDriveMaxAll(double scale) {
     scale = clamp(scale, 0.0, 1.0);
-    maxTranslationalMps = 5.0 * scale;
+    maxTranslationalMps = 9.36 * scale;
   }
   public void setSteerMaxAll(double scale) {
     scale = clamp(scale, 0.0, 1.0);
-    maxRotationalRadPerSec = Math.toRadians(360.0) * scale;
+    maxRotationalRadPerSec = Math.toRadians(720) * scale;
   }
 
   @Override public void update() { /* CTRE runs its own loops */ }

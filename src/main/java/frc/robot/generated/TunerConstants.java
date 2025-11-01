@@ -65,15 +65,25 @@ private static final Slot0Configs steerGains = new Slot0Configs()
     // The stator current at which the wheels start to slip;
     // This needs to be tuned to your individual robot
     private static final Current kSlipCurrent = Amps.of(120.0);
-
+    private static final Current SUP_CURRENT =  Amps.of (70);
     // Initial configs for the drive and steer motors and the azimuth encoder; these cannot be null.
     // Some configs will be overwritten; check the `with*InitialConfigs()` API documentation.
-    private static final TalonFXConfiguration driveInitialConfigs = new TalonFXConfiguration();
+    private static final TalonFXConfiguration driveInitialConfigs = new TalonFXConfiguration()
+    .withCurrentLimits(
+        new CurrentLimitsConfigs()
+        .withStatorCurrentLimit(kSlipCurrent)   // lower than 60A helps whining fights
+        .withStatorCurrentLimitEnable(true)
+        .withSupplyCurrentLimit(SUP_CURRENT)
+        .withSupplyCurrentLimitEnable(true)
+
+    );
     private static final TalonFXConfiguration steerInitialConfigs = new TalonFXConfiguration()
     .withCurrentLimits(
         new CurrentLimitsConfigs()
-            .withStatorCurrentLimit(Amps.of(40))   // lower than 60A helps whining fights
+            .withStatorCurrentLimit(kSlipCurrent)   // lower than 60A helps whining fights
             .withStatorCurrentLimitEnable(true)
+            .withSupplyCurrentLimit(SUP_CURRENT)
+            .withSupplyCurrentLimitEnable(true)
     )
     .withSlot0(steerGains)
     .withClosedLoopRamps(steerCLRamp);

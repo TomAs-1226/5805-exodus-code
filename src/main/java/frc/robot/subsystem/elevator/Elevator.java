@@ -271,29 +271,58 @@ public final class Elevator extends AbstractSubsystem {
     @Override
     public void update() {
 
-        // ====== PRE-FIRE WHILE RISING (no settle) — only when targeting L4+offset in algae mode ======
-        if (intakeAlgae && isTargetL4Algae()) {
-            double remainingIn = getAlgaeL4HeightIn() - getHeight(); // >0 while below top
-            if (remainingIn <= Constants.ALGAE_L4_PREFIRE_WINDOW_IN) {
-                if (!shouldShoot) {
-                    shouldShoot = true;              // start shooting while still moving up
-                    algaeFireTimer.stop();           // clean
-                    algaeFireTimer.reset();
-                    algaeFireTimer.start();          // bound shot time
-                }
-            }
-            // Stop the shot after configured duration
-            if (shouldShoot && algaeFireTimer.get() >= Constants.ALGAE_L4_SHOOT_TIME_S) {
-                shouldShoot = false;
-                algaeFireTimer.stop();
-                algaeFireTimer.reset();
-            }
-        } else {
-            // Not in the Algae L4 one-shot context: just reset the timer; do NOT force shouldShoot false
-            algaeFireTimer.stop();
-            algaeFireTimer.reset();
-        }
-        // ====== END pre-fire block ======
+// ====== ALGAE SHOT WHILE STILL GOING UP NEAR THE TOP ======
+// Goal:
+// - Only for algae L4+offset target
+// - Start shooting during the LAST few inches (Constants.ALGAE_L4_PREFIRE_WINDOW_IN)
+// - BUT guarantee we start while we're STILL COMMANDED UP, not after we're already "stopped"
+
+if (intakeAlgae && isTargetL4Algae()) {
+
+    // where we want to end (inches)
+    double targetTopIn   = getAlgaeL4HeightIn();
+
+    // where we are right now (inches)
+    double currentInches = getHeight();
+
+    // how much farther we still need to rise (>0 = below the goal)
+    double inchesLeft    = targetTopIn - currentInches;
+
+    // are we *still moving upward toward that target*?
+    // (meaning: the target position is above our current position in rotations,
+    // so elevator is actively trying to go UP, not done yet)
+    boolean stillCommandingUp = targetState.position > currentState.position;
+
+    // inWindow = we're within last N inches of the target (N from constants)
+    boolean inWindow = (inchesLeft <= Constants.ALGAE_L4_PREFIRE_WINDOW_IN) && (inchesLeft > 0.0);
+
+    // Fire logic:
+    // Only arm shooting once BOTH are true:
+    //  - we're in that last few inches window
+    //  - we're still commanded to go up (so we're mid-rise, not after settling)
+    if (inWindow && stillCommandingUp && !shouldShoot) {
+        shouldShoot = true;
+        algaeFireTimer.stop();
+        algaeFireTimer.reset();
+        algaeFireTimer.start();
+    }
+
+    // Timeout logic:
+    // After we've been shooting for ALGAE_L4_SHOOT_TIME_S, stop automatically
+    if (shouldShoot && algaeFireTimer.get() >= Constants.ALGAE_L4_SHOOT_TIME_S) {
+        shouldShoot = false;
+        algaeFireTimer.stop();
+        algaeFireTimer.reset();
+    }
+
+} else {
+    // not in algae L4 shot context:
+    algaeFireTimer.stop();
+    algaeFireTimer.reset();
+}
+
+
+
 
         if (!intakeAlgae) {
             if (isCoralInIntake()) {
@@ -361,14 +390,75 @@ public final class Elevator extends AbstractSubsystem {
             }
         }
 
-        // <<< EDIT: Dynamic constraints — use faster profile ONLY for Algae L4 moves >>>
-        TrapezoidProfile activeProfile = (intakeAlgae && isTargetL4Algae())
-            ? new TrapezoidProfile(new Constraints(
-                    Constants.ALGAE_L4_MAX_VEL_ROT_PER_S,
-                    Constants.ALGAE_L4_MAX_ACC_ROT_PER_S2))
-            : PROFILE;
+// === Dynamic motion constraints ===
+//
+// 1. Algae L4 raise: use the fast "barge shot" profile so you get up quick.
+// 2. Moving down: tiered slowdown
+//    - high up: normal speed (PROFILE)
+//    - near target (<= ELEVATOR_DOWN_SLOW_WINDOW_IN inches left): slow
+//    - very last inch-ish: crawl (extra slow) so it does NOT slam
+// 3. Normal up: base PROFILE.
 
-        State nextState = activeProfile.calculate(0.02, currentState, targetState);
+boolean goingDown = (targetState.position < currentState.position);
+
+// convert current/target to inches so we can talk "how far left to drop"
+double currentInches = getDistanceFromRotations(currentState.position);
+double targetInches  = getDistanceFromRotations(targetState.position);
+double remainingDownIn = currentInches - targetInches; // positive if above target
+
+// we'll define an extra-soft landing zone (~1.5 inches)
+final double CRAWL_WINDOW_IN = 1.5;
+
+// crawl constraints (super gentle, inline -- we don't need to touch Constants.java for this)
+final double CRAWL_MAX_VEL_ROT_PER_S  = 30.0;
+final double CRAWL_MAX_ACC_ROT_PER_S2 = 60.0;
+
+TrapezoidProfile activeProfile;
+
+if (intakeAlgae && isTargetL4Algae()) {
+    // FAST UP for algae L4 barge shot
+    activeProfile = new TrapezoidProfile(
+        new Constraints(
+            Constants.ALGAE_L4_MAX_VEL_ROT_PER_S,
+            Constants.ALGAE_L4_MAX_ACC_ROT_PER_S2
+        )
+    );
+
+} else if (goingDown) {
+    // We're lowering.
+
+    if (remainingDownIn <= CRAWL_WINDOW_IN) {
+        // final ~1.5 inches: crawl, super gentle landing
+        activeProfile = new TrapezoidProfile(
+            new Constraints(
+                CRAWL_MAX_VEL_ROT_PER_S,
+                CRAWL_MAX_ACC_ROT_PER_S2
+            )
+        );
+
+    } else if (remainingDownIn <= Constants.ELEVATOR_DOWN_SLOW_WINDOW_IN) {
+        // we're close, but not final-final -> slow profile from Constants
+        activeProfile = new TrapezoidProfile(
+            new Constraints(
+                Constants.ELEVATOR_DOWN_MAX_VEL_ROT_PER_S,
+                Constants.ELEVATOR_DOWN_MAX_ACC_ROT_PER_S2
+            )
+        );
+
+    } else {
+        // still high up: normal profile (keeps it responsive at the start of a drop)
+        activeProfile = PROFILE;
+    }
+
+} else {
+    // going up normally (not algae L4 fast raise)
+    activeProfile = PROFILE;
+}
+
+// advance profile by ~20ms
+State nextState = activeProfile.calculate(0.02, currentState, targetState);
+
+
 
         MOTOR_LEFT.setControl(
             CONTROL.withPosition(nextState.position)

@@ -20,19 +20,25 @@ public final class Constants {
 
     // ===== Elevator motion constraints (rot/s and rot/s^2) =====
     // Base profile (used for everything except Algae L4 boost)
-    public static final double ELEVATOR_BASE_MAX_VEL_ROT_PER_S  = 50.0;
-    public static final double ELEVATOR_BASE_MAX_ACC_ROT_PER_S2 = 100.0;
+    public static final double ELEVATOR_BASE_MAX_VEL_ROT_PER_S  = 100.0 ;
+    public static final double ELEVATOR_BASE_MAX_ACC_ROT_PER_S2 = 200.0;
 
     // Faster profile ONLY when in Algae mode going to L4 (+offset) – keeps velocity high
-    public static final double ALGAE_L4_MAX_VEL_ROT_PER_S       = 70.0;
-    public static final double ALGAE_L4_MAX_ACC_ROT_PER_S2      = 140.0;
+    public static final double ALGAE_L4_MAX_VEL_ROT_PER_S       = 115.0;
+    public static final double ALGAE_L4_MAX_ACC_ROT_PER_S2      = 250.0;
+    // Slower profile when moving DOWN so it doesn't slam the floor
+    public static final double ELEVATOR_DOWN_MAX_VEL_ROT_PER_S  = 70.0;
+    public static final double ELEVATOR_DOWN_MAX_ACC_ROT_PER_S2 = 140.0;
+    // How early to start slowing near the bottom when coming down (inches before target)
+    public static final double ELEVATOR_DOWN_SLOW_WINDOW_IN     = 8.0;
+
 
     // ===== Algae L4 pre-fire logic (shoot WHILE rising, near the very top) =====
     /** Start shooting when we’re within this many inches of the L4+offset target */
-    public static final double ALGAE_L4_PREFIRE_WINDOW_IN       = 1.5;
+    public static final double ALGAE_L4_PREFIRE_WINDOW_IN       = 2;
 
     /** How long to run the end-effector at full power to eject algae (seconds) */
-    public static final double ALGAE_L4_SHOOT_TIME_S            = 0.35;
+    public static final double ALGAE_L4_SHOOT_TIME_S            = 0.7;
 
     private Constants() {
         throw new UnsupportedOperationException("attempted to instantiate constants class!!");

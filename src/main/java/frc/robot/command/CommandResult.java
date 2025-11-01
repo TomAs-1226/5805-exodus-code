@@ -10,7 +10,7 @@ public final class CommandResult {
 
     /**
      * command result types
-     * @author phalaena
+     * @author florpy
      */
     public enum Type {
         /** indicates this command succeded in execution and doesnt need to be run again */
