@@ -1,7 +1,6 @@
 // FULL FILE — Robot.java
 package frc.robot;
 
-import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.PS5Controller;
 import edu.wpi.first.wpilibj.TimedRobot;
 import edu.wpi.first.wpilibj.Timer;
@@ -14,6 +13,9 @@ import frc.robot.subsystem.ClimberSubsystem;
 
 import frc.robot.vision.LimelightHelpers;
 import frc.robot.vision.AutoAlignLL;
+import edu.wpi.first.networktables.GenericEntry;
+
+
 
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
@@ -25,8 +27,10 @@ import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
 
+import java.util.Map;
+
 import com.ctre.phoenix6.hardware.Pigeon2;
-import edu.wpi.first.math.geometry.Rotation2d;
+
 
 public class Robot extends TimedRobot {
   private boolean doStartupWheelZero = false;
@@ -41,6 +45,29 @@ public class Robot extends TimedRobot {
 
   // CTRE field-centric (no manual matrix)
   private static final double ROT_GAIN   = 0.80;
+  private enum L4Phase {
+    RAISE_L2,
+    HOLD_L2,
+    DRIVE_FWD,
+    HOLD_AT_REEF,
+    RAISE_L4,
+    SHOOT,
+    BACKOFF,
+    DONE
+}
+private L4Phase l4Phase = L4Phase.RAISE_L2;
+
+// segment distance trackers for L4 auto
+private double l4SegStartYIn = 0.0;
+private double l4SegStartYInBack = 0.0;
+
+// flags to handle "wait .5s after reaching height"
+private boolean l4L2Reached = false;
+private boolean l4L4Reached = false;
+// driver UI widgets
+private GenericEntry algaeModeBoxEntry;
+private GenericEntry climberHBoxEntry;
+
 
   // Limelight
   private static final String LL_NAME = "limelight"; 
@@ -69,12 +96,10 @@ public class Robot extends TimedRobot {
   private static final double DEFAULT_MOVE_CMD             = 0.35;
   private static final double DEFAULT_RAISE_DELAY_S        = 0.25;
 
-  private static final double DEFAULT_TARGET_DIST_L2_IN    = 40.0;
+  private static final double DEFAULT_TARGET_DIST_L2_IN    = 41.5;
   private static final double DEFAULT_BACKOFF_L2_IN        = 7.0;
 
   private static final double DEFAULT_TARGET_DIST_L3_IN    = 80.0;
-  private static final double DEFAULT_TARGET_DIST_L4_IN    = 82.0;
-  private static final double DEFAULT_BACKOFF_L4_IN        = 4.0;
 
   private static final double DEFAULT_SHOT_SCALE_L2        = 0.85;
   private static final double DEFAULT_LEAVE_DIST_IN        = 44.0;
@@ -100,11 +125,8 @@ private static final double DEFAULT_BUDDY_BACK_IN              = 48.0; // back ~
 
   private double getTargetL2In()     { return SmartDashboard.getNumber("Auto/TargetDistL2In", DEFAULT_TARGET_DIST_L2_IN); }
   private double getBackoffL2In()    { return SmartDashboard.getNumber("Auto/BackoffL2In",   DEFAULT_BACKOFF_L2_IN); }
-  private double getShotScaleL2()    { return SmartDashboard.getNumber("Auto/ShotPowerScaleL2", DEFAULT_SHOT_SCALE_L2); }
 
   private double getTargetL3In()     { return SmartDashboard.getNumber("Auto/TargetDistL3In", DEFAULT_TARGET_DIST_L3_IN); }
-  private double getTargetL4In()     { return SmartDashboard.getNumber("Auto/TargetDistL4In", DEFAULT_TARGET_DIST_L4_IN); }
-  private double getBackoffL4In()    { return SmartDashboard.getNumber("Auto/BackoffL4In",   DEFAULT_BACKOFF_L4_IN); }
 
   private double getLeaveDistIn()    { return SmartDashboard.getNumber("Auto/LeaveDistIn",   DEFAULT_LEAVE_DIST_IN); }
   private double getSimpleFwdDistIn() {
@@ -150,9 +172,11 @@ private static final double DEFAULT_BUDDY_BACK_IN              = 48.0; // back ~
 
   private enum AutoState { INIT, RAISE_FIRST, MOVE_FWD, WAIT_FOR_HEIGHT, BACKOFF, EJECT, DONE }
   private AutoState autoState = AutoState.INIT;
+  
 
   private final Timer autoTimer = new Timer();
   private final Timer raiseDelayTimer = new Timer();
+
 
   private double odomYIn = 0.0;
   private double segStartYIn = 0.0;
@@ -167,8 +191,8 @@ private static final double DEFAULT_BUDDY_BACK_IN              = 48.0; // back ~
   private int lastPOV = -1;
   private double homeDirSign = +1.0;
 
-  // Legacy record (not used for transforms now)
-  private double yawSeedRad = 0.0;
+
+  
 
 
   public Robot() {
@@ -201,7 +225,7 @@ private static final double DEFAULT_BUDDY_BACK_IN              = 48.0; // back ~
     //autoChooser.addOption("Leave", "leave");
     autoChooser.addOption("Score L2 (backoff 6\")", "score_l2_backoff6");
     //autoChooser.addOption("Score L3", "score_l3");
-    //autoChooser.addOption("Score L4 (safe L2-first)", "score_l4_safe");
+    autoChooser.addOption("Score L4 (safe L2-first)", "score_l4_safe");
     autoChooser.addOption("Forward 6 in", "fwd6");
     autoChooser.addOption("L2 then Forward 6 in", "l2_then_fwd6");
     autoChooser.addOption("Buddy Auto", "buddy_auto");
@@ -230,6 +254,37 @@ SmartDashboard.putNumber("Auto/SimpleFwdAfterL2DistIn",  DEFAULT_SIMPLE_FWD_AFTE
 SmartDashboard.putNumber("Auto/BuddyFwdIn",              DEFAULT_BUDDY_FWD_IN);
 SmartDashboard.putNumber("Auto/BuddyBackIn",             DEFAULT_BUDDY_BACK_IN);
     SmartDashboard.putNumber("Auto/OdomYIn", 0.0);
+        // === DriverUI tab widgets for mode/climber state ===
+    // This forces Shuffleboard to create and keep these entries every boot.
+    // === DriverUI tab widgets (big color boxes) ===
+    // We use kBooleanBox:
+    //   true  -> GREEN
+    //   false -> RED
+    var driverTab = Shuffleboard.getTab("DriverUI");
+
+    algaeModeBoxEntry = driverTab
+        .add("ALGAE MODE", false) // false = coral mode (red box at start)
+        .withWidget(BuiltInWidgets.kBooleanBox)
+        .withProperties(Map.of(
+            "Color when true", "Lime",
+            "Color when false", "Red"
+        ))
+        .withPosition(0, 0) // big and obvious for drive coach
+        .withSize(4, 3)     // make it LARGE
+        .getEntry();
+
+    climberHBoxEntry = driverTab
+        .add("CLIMBER H", false) // false = not spinning yet
+        .withWidget(BuiltInWidgets.kBooleanBox)
+        .withProperties(Map.of(
+            "Color when true", "Lime",
+            "Color when false", "Red"
+        ))
+        .withPosition(4, 0) // right next to algae box
+        .withSize(4, 3)
+        .getEntry();
+
+
   }
 
   @Override public void robotPeriodic() { SubsystemManager.update(); }
@@ -268,6 +323,13 @@ DRIVETRAIN.seedFieldCentricNow();
 
     headingHoldStop();
     autoState = AutoState.INIT;
+    // reset L4 auto machine
+l4Phase = L4Phase.RAISE_L2;
+l4SegStartYIn = 0.0;
+l4SegStartYInBack = 0.0;
+l4L2Reached = false;
+l4L4Reached = false;
+
   }
 
   @Override
@@ -450,66 +512,83 @@ private void runRaiseL2_ThenForward6In() {
     }
   }
 
-  // ==== L2 (auto) ====
-  private void runScoreL2_RaiseThenGo_Eject_Backoff6() {
-    final double targetHeightIn = Constants.ELEVATOR_HEIGHTS[2];
-    final double driveTargetIn  = getTargetL2In();
-    final double backoffIn      = getBackoffL2In();
+// ==== L2 (auto) with shoot delay ====
+private void runScoreL2_RaiseThenGo_Eject_Backoff6() {
+  final double targetHeightIn = Constants.ELEVATOR_HEIGHTS[2];
+  final double driveTargetIn  = getTargetL2In();
+  final double backoffIn      = getBackoffL2In();
 
-    switch (autoState) {
-      case INIT:
-        DRIVETRAIN.drive(0,0,0,true);
-        ELEVATOR.setHeight(targetHeightIn);
+  // how long to pause at the reef before actually spitting (seconds)
+  final double SHOOT_DELAY_S  = 0.25;
+
+  switch (autoState) {
+    case INIT:
+      DRIVETRAIN.drive(0,0,0,true);
+      ELEVATOR.setHeight(targetHeightIn);
+      autoTimer.reset(); autoTimer.start();
+      autoState = AutoState.RAISE_FIRST;
+      break;
+
+    case RAISE_FIRST:
+      if (ELEVATOR.atHeightInches(targetHeightIn, L2_TOL_IN) || autoTimer.get() > L2_RAISE_TIMEOUT_S) {
+        segStartYIn = odomYIn;
+        headingHoldStart();
         autoTimer.reset(); autoTimer.start();
-        autoState = AutoState.RAISE_FIRST;
-        break;
+        autoState = AutoState.MOVE_FWD;
+      }
+      break;
 
-      case RAISE_FIRST:
-        if (ELEVATOR.atHeightInches(targetHeightIn, L2_TOL_IN) || autoTimer.get() > L2_RAISE_TIMEOUT_S) {
-          segStartYIn = odomYIn;
-          headingHoldStart();
-          autoTimer.reset(); autoTimer.start();
-          autoState = AutoState.MOVE_FWD;
-        }
-        break;
+    case MOVE_FWD:
+      currentFwdCmd = getMoveCmd();
+      DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
 
-      case MOVE_FWD:
-        currentFwdCmd = getMoveCmd();
-        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
-        if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
-          DRIVETRAIN.drive(0,0,0,true);
-          headingHoldStop();
-          ELEVATOR.ejectCoral();
-          autoTimer.reset(); autoTimer.start();
-          autoState = AutoState.EJECT;
-        }
-        break;
-
-      case EJECT:
-        if (autoTimer.get() > EJECT_TIME_S) {
-          ELEVATOR.setEjection(false);
-          segStartYInBack = odomYIn;
-          headingHoldStart();
-          autoTimer.reset(); autoTimer.start();
-          autoState = AutoState.BACKOFF;
-        }
-        break;
-
-      case BACKOFF:
-        currentFwdCmd = -getMoveCmd();
-        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
-        if (Math.abs(odomYIn - segStartYInBack) >= Math.abs(backoffIn)) {
-          DRIVETRAIN.drive(0,0,0,true);
-          headingHoldStop();
-          autoState = AutoState.DONE;
-        }
-        break;
-
-      default:
+      if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
+        // we're in position, stop and hold heading
         DRIVETRAIN.drive(0,0,0,true);
-        break;
-    }
+        headingHoldStop();
+
+        // start a short wait before we actually eject
+        autoTimer.reset(); autoTimer.start();
+        autoState = AutoState.WAIT_FOR_HEIGHT; // reuse this state as "pre-shoot delay"
+      }
+      break;
+
+    case WAIT_FOR_HEIGHT:
+      // just sit still for SHOOT_DELAY_S, THEN fire
+      if (autoTimer.get() > SHOOT_DELAY_S) {
+        ELEVATOR.ejectCoral();
+        autoTimer.reset(); autoTimer.start();
+        autoState = AutoState.EJECT;
+      }
+      break;
+
+    case EJECT:
+      if (autoTimer.get() > EJECT_TIME_S) {
+        ELEVATOR.setEjection(false);
+        segStartYInBack = odomYIn;
+        headingHoldStart();
+        autoTimer.reset(); autoTimer.start();
+        autoState = AutoState.BACKOFF;
+      }
+      break;
+
+    case BACKOFF:
+      currentFwdCmd = -getMoveCmd();
+      DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
+
+      if (Math.abs(odomYIn - segStartYInBack) >= Math.abs(backoffIn)) {
+        DRIVETRAIN.drive(0,0,0,true);
+        headingHoldStop();
+        autoState = AutoState.DONE;
+      }
+      break;
+
+    default:
+      DRIVETRAIN.drive(0,0,0,true);
+      break;
   }
+}
+
 
   // ==== L3 generic (auto) ====
   private void runScore_Lx(double targetHeightIn, double driveTargetIn, double tolIn, double raiseTimeoutS) {
@@ -561,76 +640,158 @@ private void runRaiseL2_ThenForward6In() {
     }
   }
 
-  // ==== L4 safe (auto) ====
-  private void runScore_L4_Safe() {
-    final double l2HeightIn   = Constants.ELEVATOR_HEIGHTS[2];
-    final double l4HeightIn   = Constants.ELEVATOR_HEIGHTS[4];
-    final double driveTargetIn = getTargetL4In();
-    final double backoffIn     = getBackoffL4In();
+// ==== L4 safe (auto) reworked ====
+// sequence:
+// 1. raise to L2
+// 2. wait 0.5s
+// 3. drive in to reef
+// 4. wait 0.5s
+// 5. raise to L4
+// 6. short settle, then shoot
+// 7. back off a tiny bit
+// 8. after backing out, send elevator home (zero height)
+private void runScore_L4_Safe() {
+  final double l2HeightIn    = Constants.ELEVATOR_HEIGHTS[2];
+  final double l4HeightIn    = Constants.ELEVATOR_HEIGHTS[4];
 
-    switch (autoState) {
-      case INIT:
-        DRIVETRAIN.drive(0,0,0,true);
-        ELEVATOR.setHeight(l2HeightIn);
-        autoTimer.reset(); autoTimer.start();
-        autoState = AutoState.RAISE_FIRST;
-        break;
+  // how far to drive IN and how far to back OUT
+  final double driveTargetIn = getTargetL2In();
+  final double backoffIn     = getBackoffL2In();
 
-      case RAISE_FIRST:
-        if (ELEVATOR.atHeightInches(l2HeightIn, L2_TOL_IN) || autoTimer.get() > L2_RAISE_TIMEOUT_S) {
-          segStartYIn = odomYIn;
-          headingHoldStart();
-          autoTimer.reset(); autoTimer.start();
-          autoState = AutoState.MOVE_FWD;
-        }
-        break;
+  // "wait a bit" before spitting after we're up at L4
+  final double SHOOT_DELAY_S = 0.25;
 
-      case MOVE_FWD:
-        currentFwdCmd = getMoveCmd();
-        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
-        if (Math.abs(odomYIn - segStartYIn) >= Math.abs(driveTargetIn)) {
+  switch (l4Phase) {
+
+    // command L2 height, start timing
+    case RAISE_L2:
+      DRIVETRAIN.drive(0,0,0,true);
+      ELEVATOR.setHeight(l2HeightIn);
+
+      l4L2Reached = false;              // haven't confirmed L2 yet
+      autoTimer.reset(); autoTimer.start();
+      l4Phase = L4Phase.HOLD_L2;
+      break;
+
+    // stay at L2, then wait 0.5s AFTER we actually reach it
+    case HOLD_L2:
+      currentFwdCmd = 0.0;
+
+      boolean l2Ready = ELEVATOR.atHeightInches(l2HeightIn, L2_TOL_IN)
+                      || autoTimer.get() > L2_RAISE_TIMEOUT_S;
+
+      if (!l4L2Reached) {
+          // first moment we consider L2 "good"
+          if (l2Ready) {
+              l4L2Reached = true;
+              autoTimer.reset(); autoTimer.start(); // start the 0.5s dwell
+          }
+      } else {
+          // we've already hit L2; now burn 0.5s before we drive forward
+          if (autoTimer.get() >= 0.5) {
+              l4SegStartYIn = odomYIn; // record where we started the forward push
+              headingHoldStart();      // lock heading for the push
+              autoTimer.reset(); autoTimer.start();
+              l4Phase = L4Phase.DRIVE_FWD;
+          }
+      }
+      break;
+
+    // drive forward toward reef while holding heading
+    case DRIVE_FWD:
+      currentFwdCmd = getMoveCmd();
+      DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
+
+      if (Math.abs(odomYIn - l4SegStartYIn) >= Math.abs(driveTargetIn)) {
+          // reached reef, stop and pause
           DRIVETRAIN.drive(0,0,0,true);
           headingHoldStop();
-          segStartYInBack = odomYIn;
-          headingHoldStart();
-          autoTimer.reset(); autoTimer.start();
-          autoState = AutoState.BACKOFF;
-        }
-        break;
 
-      case BACKOFF:
-        currentFwdCmd = -getMoveCmd();
-        DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
-        if (Math.abs(odomYIn - segStartYInBack) >= Math.abs(backoffIn)) {
-          DRIVETRAIN.drive(0,0,0,true);
-          headingHoldStop();
+          autoTimer.reset(); autoTimer.start(); // start the 0.5s dwell at reef
+          l4Phase = L4Phase.HOLD_AT_REEF;
+      }
+      break;
+
+    // hold still at reef for 0.5s, THEN go for L4 height
+    case HOLD_AT_REEF:
+      currentFwdCmd = 0.0;
+
+      if (autoTimer.get() >= 0.5) {
           ELEVATOR.setHeight(l4HeightIn);
-          autoTimer.reset(); autoTimer.start();
-          autoState = AutoState.WAIT_FOR_HEIGHT;
-        }
-        break;
 
-      case WAIT_FOR_HEIGHT:
-        if (ELEVATOR.atHeightInches(l4HeightIn, L4_TOL_IN) || autoTimer.get() > L4_RAISE_TIMEOUT_S) {
-          ELEVATOR.ejectCoral();
+          l4L4Reached = false;          // haven't confirmed L4 yet
           autoTimer.reset(); autoTimer.start();
-          autoState = AutoState.EJECT;
-        }
-        break;
+          l4Phase = L4Phase.RAISE_L4;
+      }
+      break;
 
-      case EJECT:
-        if (autoTimer.get() > EJECT_TIME_S) {
+    // raise to L4, then small SHOOT_DELAY_S settle, then spit
+    case RAISE_L4:
+      currentFwdCmd = 0.0;
+
+      boolean l4Ready = ELEVATOR.atHeightInches(l4HeightIn, L4_TOL_IN)
+                      || autoTimer.get() > L4_RAISE_TIMEOUT_S;
+
+      if (!l4L4Reached) {
+          // first time we believe we're basically at L4
+          if (l4Ready) {
+              l4L4Reached = true;
+              autoTimer.reset(); autoTimer.start(); // start small pre-shoot delay
+          }
+      } else {
+          // after reach L4, let it sit SHOOT_DELAY_S, then fire
+          if (autoTimer.get() >= SHOOT_DELAY_S) {
+              ELEVATOR.ejectCoral();    // start ejecting
+              autoTimer.reset(); autoTimer.start();
+
+              // prep for backing out
+              l4SegStartYInBack = odomYIn;
+              headingHoldStart();
+
+              l4Phase = L4Phase.SHOOT;
+          }
+      }
+      break;
+
+    // keep shooting until EJECT_TIME_S, then stop and start backing up
+    case SHOOT:
+      currentFwdCmd = 0.0;
+
+      if (autoTimer.get() > EJECT_TIME_S) {
           ELEVATOR.setEjection(false);
-          DRIVETRAIN.drive(0,0,0,true);
-          autoState = AutoState.DONE;
-        }
-        break;
 
-      default:
-        DRIVETRAIN.drive(0,0,0,true);
-        break;
-    }
+          autoTimer.reset(); autoTimer.start();
+          l4Phase = L4Phase.BACKOFF;
+      }
+      break;
+
+    // back off a tiny bit while holding heading
+    case BACKOFF:
+      currentFwdCmd = -getMoveCmd();
+      DRIVETRAIN.drive(currentFwdCmd, 0.0, headingHoldOmega(), true);
+
+      if (Math.abs(odomYIn - l4SegStartYInBack) >= Math.abs(backoffIn)) {
+          // stop moving back
+          DRIVETRAIN.drive(0,0,0,true);
+          headingHoldStop();
+
+          // === NEW: drop elevator back to home ===
+          ELEVATOR.setHeight(l2HeightIn);
+
+          l4Phase = L4Phase.DONE;
+      }
+      break;
+
+    // finished
+    case DONE:
+    default:
+      currentFwdCmd = 0.0;
+      DRIVETRAIN.drive(0,0,0,true);
+      break;
   }
+}
+
+
 
   @Override
   public void teleopPeriodic() {
@@ -772,29 +933,57 @@ private void runRaiseL2_ThenForward6In() {
               CLIMBER.stopH();
           }
       }
+
+      // === dashboard color for climber H ===
+// GREEN when spinning, RED when stopped
+{
+  boolean hActiveNow = SmartDashboard.getBoolean("Climb/HToggleActive", false);
+  SmartDashboard.putString(
+      "UI/ClimberHColor",
+      hActiveNow ? "GREEN" : "RED"
+  );
+}
+
   
-      if (phase == Phase.IDLE) {
-          double base = Math.abs(SmartDashboard.getNumber("Climb/ManualJogPercent",  0.14));
-          double outM = Math.abs(SmartDashboard.getNumber("Climb/ManualJogOutMult",  3.0));
-          double inM  = Math.abs(SmartDashboard.getNumber("Climb/ManualJogInMult",   3.0));
-          double jogOut = Math.min(1.0, base * outM);
-          double jogIn  = Math.min(1.0, base * inM);
-  
-          if (upHeld ^ downHeld) {
-              CLIMBER.stopH();
-              if (upHeld)  {
-                  CLIMBER.runGBPercent(-homeDirSign * jogOut);
-              } else {
-                  CLIMBER.runGBPercent(+homeDirSign * jogIn);
-              }
-          } else {
-              CLIMBER.stopGB();
-          }
+if (phase == Phase.IDLE) {
+  double base = Math.abs(SmartDashboard.getNumber("Climb/ManualJogPercent",  0.14));
+  double outM = Math.abs(SmartDashboard.getNumber("Climb/ManualJogOutMult",  3.0));
+  double inM  = Math.abs(SmartDashboard.getNumber("Climb/ManualJogInMult",   3.0));
+  double jogOut = Math.min(1.0, base * outM);
+  double jogIn  = Math.min(1.0, base * inM);
+
+  if (upHeld ^ downHeld) {
+      if (upHeld)  {
+          CLIMBER.runGBPercent(-homeDirSign * jogOut);
+      } else {
+          CLIMBER.runGBPercent(+homeDirSign * jogIn);
       }
-  
-      lastPOV = pov;
+  } else {
+      CLIMBER.stopGB();
   }
-  
+}
+
+    // === UPDATE DRIVERUI BIG COLOR BOXES ===
+    // algaeModeBoxEntry:
+    //   true  (Lime)  => ALGAE MODE
+    //   false (Red)   => CORAL MODE
+    boolean algaeIsOn = ELEVATOR.inAlgaeMode();
+    if (algaeModeBoxEntry != null) {
+        algaeModeBoxEntry.setBoolean(algaeIsOn);
+    }
+
+    // climberHBoxEntry:
+    //   true  (Lime)  => H is actively spinning
+    //   false (Red)   => H is not spinning
+    boolean hActiveNow = SmartDashboard.getBoolean("Climb/HToggleActive", false);
+    if (climberHBoxEntry != null) {
+        climberHBoxEntry.setBoolean(hActiveNow);
+    }
+
+    lastPOV = pov;
+}
+
+
   
 
   @Override

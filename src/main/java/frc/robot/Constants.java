@@ -9,9 +9,9 @@ public final class Constants {
     /** elevator heights where ELEVATOR_HEIGHTS[index] returns the height for scoring index */
     public static final double[] ELEVATOR_HEIGHTS = {
         0,
-        7.5,
-        15.5,
-        31.5,
+        6.5,
+        14.5,
+        30.5,
         57.67
     };
 
