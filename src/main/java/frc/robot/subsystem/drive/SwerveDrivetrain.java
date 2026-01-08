@@ -1,5 +1,7 @@
 package frc.robot.subsystem.drive;
 
+import static edu.wpi.first.units.Units.MetersPerSecond;
+
 import edu.wpi.first.math.geometry.Rotation2d;
 import frc.robot.subsystem.AbstractSubsystem;
 
@@ -97,7 +99,7 @@ public class SwerveDrivetrain extends AbstractSubsystem {
 
   public void setDriveMaxAll(double scale) {
     scale = clamp(scale, 0.0, 1.0);
-    maxTranslationalMps = 9.36 * scale;
+    maxTranslationalMps = TunerConstants.kSpeedAt12Volts.in(MetersPerSecond) * scale;
   }
   public void setSteerMaxAll(double scale) {
     scale = clamp(scale, 0.0, 1.0);
