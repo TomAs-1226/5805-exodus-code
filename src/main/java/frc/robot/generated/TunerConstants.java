@@ -38,13 +38,6 @@ private static final Slot0Configs steerGains = new Slot0Configs()
 .withStaticFeedforwardSign(StaticFeedforwardSignValue.UseClosedLoopSign);
     // When using closed-loop control, the drive motor uses the control
     // output type specified by SwerveModuleConstants.DriveMotorClosedLoopOutput
-    private static final Slot0Configs driveGains = new Slot0Configs()
-    .withKP(0.10)   // 0.08–0.14 typical
-    .withKI(0.0)
-    .withKD(0.0)
-    .withKS(0.06)   // static friction compensation
-    .withKV(0.094)  // scaled for Falcon 500 free speed with 12T pinion
-    .withKA(0.0);
 
     // The closed-loop output type to use for the steer motors;
     // This affects the PID/FF gains for the steer motors
@@ -96,17 +89,33 @@ private static final Slot0Configs steerGains = new Slot0Configs()
     // All swerve devices must share the same CAN bus
     public static final CANBus kCANBus = new CANBus("Default Name", "./logs/example.hoot");
 
+    private static final double kFalconFreeSpeedRpm = 6380.0;
+    private static final double kBaseDriveGearRatio = 6.821052631578947;
+    private static final double kBasePinionTeeth = 10.0;
+    private static final double kDrivePinionTeeth = 12.0;
+    private static final double kDriveGearRatio = kBaseDriveGearRatio * (kBasePinionTeeth / kDrivePinionTeeth);
+    private static final double kSteerGearRatio = 12.1;
+    private static final Distance kWheelRadius = Inches.of(4);
     // Theoretical free speed (m/s) at 12 V applied output;
-    // Falcon 500 free speed (6380 RPM) with 12T pinion and current gearing.
-    public static final LinearVelocity kSpeedAt12Volts = MetersPerSecond.of(11.942);
+    // Falcon 500 free speed with 12T pinion and current gearing.
+    private static final double kSpeedAt12VoltsMps =
+        ((kFalconFreeSpeedRpm / 60.0) / kDriveGearRatio)
+            * (2.0 * Math.PI * kWheelRadius.in(Meters));
+    public static final LinearVelocity kSpeedAt12Volts = MetersPerSecond.of(kSpeedAt12VoltsMps);
+
+    private static final double kBaseSpeedAt12Volts = 9.36;
+    private static final double kBaseDriveKV = 0.12;
+    private static final Slot0Configs driveGains = new Slot0Configs()
+    .withKP(0.10)   // 0.08–0.14 typical
+    .withKI(0.0)
+    .withKD(0.0)
+    .withKS(0.06)   // static friction compensation
+    .withKV(kBaseDriveKV * (kBaseSpeedAt12Volts / kSpeedAt12VoltsMps))
+    .withKA(0.0);
 
     // Every 1 rotation of the azimuth results in kCoupleRatio drive motor turns;
     // This may need to be tuned to your individual robot
     private static final double kCoupleRatio = 5.4;
-
-    private static final double kDriveGearRatio = 5.684210526315789;
-    private static final double kSteerGearRatio = 12.1;
-    private static final Distance kWheelRadius = Inches.of(4);
 
     private static final boolean kInvertLeftSide = false;
     private static final boolean kInvertRightSide = true;
