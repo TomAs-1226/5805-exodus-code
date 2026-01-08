@@ -292,7 +292,7 @@ SmartDashboard.putNumber("Auto/BuddyBackIn",             DEFAULT_BUDDY_BACK_IN);
   @Override
   public void autonomousInit() {
     DRIVETRAIN.start();
-    DRIVETRAIN.setDriveMaxAll(0.90);
+    DRIVETRAIN.setDriveMaxAll(0.78);
     DRIVETRAIN.setSteerMaxAll(0.95);
 // --- Field-centric forward = away from our driver station (toward barge) ---
 final double headingOffsetDeg = SmartDashboard.getNumber("Drive/HeadingOffsetDeg", 0.0);

@@ -20,8 +20,8 @@ public final class Constants {
 
     // ===== Elevator motion constraints (rot/s and rot/s^2) =====
     // Base profile (used for everything except Algae L4 boost)
-    public static final double ELEVATOR_BASE_MAX_VEL_ROT_PER_S  = 100.0 ;
-    public static final double ELEVATOR_BASE_MAX_ACC_ROT_PER_S2 = 200.0;
+    public static final double ELEVATOR_BASE_MAX_VEL_ROT_PER_S  = 90.0 ;
+    public static final double ELEVATOR_BASE_MAX_ACC_ROT_PER_S2 = 180.0;
 
     // Faster profile ONLY when in Algae mode going to L4 (+offset) – keeps velocity high
     public static final double ALGAE_L4_MAX_VEL_ROT_PER_S       = 115.0;
