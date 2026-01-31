@@ -27,7 +27,7 @@ public class ClimberSubsystem extends SubsystemBase {
   // ==================== PID / behavior ====================
   public static final double GB_KP = 20.0, GB_KI = 0.0, GB_KD = 0.0, GB_KS = 0.0, GB_KV = 0.0, GB_KA = 0.0;
   public static final double GB_TOLERANCE_DEG = 2.0;        // “at target” (deg)
-  public static final double INTAKE_SPEED = -0.25;          // H motor (%)
+  public static final double INTAKE_SPEED = -0.5;          // H motor (%)
   public static final double STALL_SUPPLY_CURRENT_A = 38.0; // legacy (kept if you still need it)
   public static final double STALL_DEBOUNCE_S = 0.25;
 

@@ -4,11 +4,7 @@ import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose3d;
 
 /**
- * Minimal Limelight auto-align helper: only strafe (x) + rotate (omega).
- * - Uses targetpose_robotspace when available for proper lateral meters + yaw.
- * - Falls back to tx-only if 3D solve isn't available.
- * - No forward/back output.
- * - LEDs forced on while enabled; pipeline forced to the configured index.
+
  */
 public final class AutoAlignLL {
 
@@ -22,7 +18,7 @@ public final class AutoAlignLL {
   private final String name;
   private final int pipelineIndex;
 
-  // Tunables (kept modest; yaw a bit firmer so you can see turning)
+  // Tunables 
   private static final double Y_DB_METERS   = 0.03;  // ignore tiny lateral error
   private static final double Y_KP          = 1.25;  // strafe m->cmd
   private static final double Y_CMD_MAX     = 0.45;  // clamp
@@ -31,7 +27,7 @@ public final class AutoAlignLL {
   private static final double YAW_KP_DEG    = 0.060; // deg->cmd (slightly firmer than before)
   private static final double YAW_CMD_MAX   = 0.70;
 
-  // Fallback (tx-only) — still subtle
+  // Fallback (tx-only)
   private static final double TX_STR_KP     = 0.020; // deg->strafe
   private static final double TX_YAW_KP     = 0.040; // deg->omega (slightly firmer)
 

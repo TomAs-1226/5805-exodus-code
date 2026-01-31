@@ -6,22 +6,40 @@ package frc.robot;
  */
 public final class Constants {
 
-    //put consts here (or dont..)
-    public static final double MODULE_WIDTH = 21.75;
-    public static final double MODULE_LENGTH = 27.75;
-
     /** elevator heights where ELEVATOR_HEIGHTS[index] returns the height for scoring index */
     public static final double[] ELEVATOR_HEIGHTS = {
         0,
-        7.5,
-        15.5,
-        31.5,
+        6.5,
+        14.5,
+        30.5,
         57.67
     };
 
-    /**
-     * dont instantiate this guh..
-     */
+    /** Extra height (in) for L4 when in algae mode */
+    public static final double ALGAE_L4_OFFSET_IN = 3.0;
+
+    // ===== Elevator motion constraints (rot/s and rot/s^2) =====
+    // Base profile (used for everything except Algae L4 boost)
+    public static final double ELEVATOR_BASE_MAX_VEL_ROT_PER_S  = 90.0 ;
+    public static final double ELEVATOR_BASE_MAX_ACC_ROT_PER_S2 = 180.0;
+
+    // Faster profile ONLY when in Algae mode going to L4 (+offset) – keeps velocity high
+    public static final double ALGAE_L4_MAX_VEL_ROT_PER_S       = 115.0;
+    public static final double ALGAE_L4_MAX_ACC_ROT_PER_S2      = 250.0;
+    // Slower profile when moving DOWN so it doesn't slam the floor
+    public static final double ELEVATOR_DOWN_MAX_VEL_ROT_PER_S  = 70.0;
+    public static final double ELEVATOR_DOWN_MAX_ACC_ROT_PER_S2 = 140.0;
+    // How early to start slowing near the bottom when coming down (inches before target)
+    public static final double ELEVATOR_DOWN_SLOW_WINDOW_IN     = 8.0;
+
+
+    // ===== Algae L4 pre-fire logic (shoot WHILE rising, near the very top) =====
+    /** Start shooting when we’re within this many inches of the L4+offset target */
+    public static final double ALGAE_L4_PREFIRE_WINDOW_IN       = 2;
+
+    /** How long to run the end-effector at full power to eject algae (seconds) */
+    public static final double ALGAE_L4_SHOOT_TIME_S            = 0.7;
+
     private Constants() {
         throw new UnsupportedOperationException("attempted to instantiate constants class!!");
     }
@@ -51,10 +69,10 @@ public final class Constants {
         BR_SWERVE(21),
         BR_ENCODER(4),
         PIGEON_2(28);
+
         public final int ID;
         Device(int deviceId) {
             this.ID = deviceId;
         }
     }
-
 }

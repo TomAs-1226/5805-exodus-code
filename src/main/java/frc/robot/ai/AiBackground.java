@@ -27,16 +27,11 @@ public final class AiBackground {
     }
   }
 
-  // IMU feeds (read-only; no targets, no state machines)
-  private final DoubleSupplier yawDeg;
-  private final DoubleSupplier yawRateDegPerSec;
   private final DoubleSupplier pitchDeg;
 
   public AiBackground(DoubleSupplier yawDeg,
                       DoubleSupplier yawRateDegPerSec,
                       DoubleSupplier pitchDeg) {
-    this.yawDeg = yawDeg;
-    this.yawRateDegPerSec = yawRateDegPerSec;
     this.pitchDeg = pitchDeg;
   }
 

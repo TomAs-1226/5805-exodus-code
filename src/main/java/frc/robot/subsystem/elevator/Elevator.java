@@ -23,6 +23,7 @@ import frc.robot.util.RobotMath;
 // >>> imports already present <<<
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard; // DS keys
 import edu.wpi.first.math.MathUtil;                           // clamp()
+import edu.wpi.first.wpilibj.Timer;                           // <<< NEW
 
 /**
  * blah blah blah elevator it does elevator things (it elevates, duh?)
@@ -60,6 +61,9 @@ public final class Elevator extends AbstractSubsystem {
     private State targetState; 
     /** incase you need to be higher up */
     private double heightOffset;
+
+    // <<< NEW: timer to bound algae auto-fire duration >>>
+    private final Timer algaeFireTimer = new Timer();
 
     public boolean atHeightInches(double inches, double tolInches) {
         return Math.abs(getHeight() - inches) <= Math.abs(tolInches);
@@ -106,7 +110,15 @@ public final class Elevator extends AbstractSubsystem {
             .withSlot(0)
             .withEnableFOC(true);
         this.FEED_CTRL = new ElevatorFeedforward(0.4, 0.16, 1.0/9.4);
-        this.PROFILE = new TrapezoidProfile(new Constraints(50, 100));
+
+        // <<< EDIT: use base constraints from Constants instead of hardcoded 50/100 >>>
+        this.PROFILE = new TrapezoidProfile(
+            new Constraints(
+                Constants.ELEVATOR_BASE_MAX_VEL_ROT_PER_S,
+                Constants.ELEVATOR_BASE_MAX_ACC_ROT_PER_S2
+            )
+        );
+
         this.currentState = new State();
         this.targetState = new State();
         this.END_EFFECTOR = new KrakenX60(Constants.Device.ELEVATOR_END_EFFECTOR.ID);
@@ -125,7 +137,6 @@ public final class Elevator extends AbstractSubsystem {
         endEffectorConfig.MotorOutput.NeutralMode = NeutralModeValue.Brake;
         CORAL_INTAKE.getConfigurator().apply(intakeConfig);
         END_EFFECTOR.getConfigurator().apply(endEffectorConfig);
-        
     }
 
     /**
@@ -230,6 +241,17 @@ public final class Elevator extends AbstractSubsystem {
         return RobotMath.fEquals(targetState.position, getRotationsFromDistance(inches));
     }
 
+    // <<< NEW: L4+offset target height (in) and equality test on targetState >>>
+    private double getAlgaeL4HeightIn() {
+        return Constants.ELEVATOR_HEIGHTS[4] + Constants.ALGAE_L4_OFFSET_IN;
+    }
+    private boolean isTargetL4Algae() {
+        return RobotMath.fEquals(
+            targetState.position,
+            getRotationsFromDistance(getAlgaeL4HeightIn())
+        );
+    }
+
     // existing L1-only tunable accessor (+ clamp)
     private double getShootPowerL1() {
         double raw = SmartDashboard.getNumber("Elevator/ShootPowerL1", DEFAULT_SHOOT_POWER_L1);
@@ -248,6 +270,60 @@ public final class Elevator extends AbstractSubsystem {
 
     @Override
     public void update() {
+
+// ====== ALGAE SHOT WHILE STILL GOING UP NEAR THE TOP ======
+// Goal:
+// - Only for algae L4+offset target
+// - Start shooting during the LAST few inches (Constants.ALGAE_L4_PREFIRE_WINDOW_IN)
+// - BUT guarantee we start while we're STILL COMMANDED UP, not after we're already "stopped"
+
+if (intakeAlgae && isTargetL4Algae()) {
+
+    // where we want to end (inches)
+    double targetTopIn   = getAlgaeL4HeightIn();
+
+    // where we are right now (inches)
+    double currentInches = getHeight();
+
+    // how much farther we still need to rise (>0 = below the goal)
+    double inchesLeft    = targetTopIn - currentInches;
+
+    // are we *still moving upward toward that target*?
+    // (meaning: the target position is above our current position in rotations,
+    // so elevator is actively trying to go UP, not done yet)
+    boolean stillCommandingUp = targetState.position > currentState.position;
+
+    // inWindow = we're within last N inches of the target (N from constants)
+    boolean inWindow = (inchesLeft <= Constants.ALGAE_L4_PREFIRE_WINDOW_IN) && (inchesLeft > 0.0);
+
+    // Fire logic:
+    // Only arm shooting once BOTH are true:
+    //  - we're in that last few inches window
+    //  - we're still commanded to go up (so we're mid-rise, not after settling)
+    if (inWindow && stillCommandingUp && !shouldShoot) {
+        shouldShoot = true;
+        algaeFireTimer.stop();
+        algaeFireTimer.reset();
+        algaeFireTimer.start();
+    }
+
+    // Timeout logic:
+    // After we've been shooting for ALGAE_L4_SHOOT_TIME_S, stop automatically
+    if (shouldShoot && algaeFireTimer.get() >= Constants.ALGAE_L4_SHOOT_TIME_S) {
+        shouldShoot = false;
+        algaeFireTimer.stop();
+        algaeFireTimer.reset();
+    }
+
+} else {
+    // not in algae L4 shot context:
+    algaeFireTimer.stop();
+    algaeFireTimer.reset();
+}
+
+
+
+
         if (!intakeAlgae) {
             if (isCoralInIntake()) {
                 CORAL_INTAKE.set(0.2);
@@ -303,7 +379,7 @@ public final class Elevator extends AbstractSubsystem {
                 shouldShoot = false;
             }
         } else {
-            // algae mode unchanged
+            // algae mode unchanged (shooting behavior governed by shouldShoot from pre-fire block)
             CORAL_INTAKE.set(0.0);
             if (shouldShoot) {
                 END_EFFECTOR.set(1.0);
@@ -313,7 +389,77 @@ public final class Elevator extends AbstractSubsystem {
                 END_EFFECTOR.set(-0.2);
             }
         }
-        State nextState = PROFILE.calculate(0.02, currentState, targetState);
+
+// === Dynamic motion constraints ===
+//
+// 1. Algae L4 raise: use the fast "barge shot" profile so you get up quick.
+// 2. Moving down: tiered slowdown
+//    - high up: normal speed (PROFILE)
+//    - near target (<= ELEVATOR_DOWN_SLOW_WINDOW_IN inches left): slow
+//    - very last inch-ish: crawl (extra slow) so it does NOT slam
+// 3. Normal up: base PROFILE.
+
+boolean goingDown = (targetState.position < currentState.position);
+
+// convert current/target to inches so we can talk "how far left to drop"
+double currentInches = getDistanceFromRotations(currentState.position);
+double targetInches  = getDistanceFromRotations(targetState.position);
+double remainingDownIn = currentInches - targetInches; // positive if above target
+
+// we'll define an extra-soft landing zone (~1.5 inches)
+final double CRAWL_WINDOW_IN = 1.5;
+
+// crawl constraints (super gentle, inline -- we don't need to touch Constants.java for this)
+final double CRAWL_MAX_VEL_ROT_PER_S  = 30.0;
+final double CRAWL_MAX_ACC_ROT_PER_S2 = 60.0;
+
+TrapezoidProfile activeProfile;
+
+if (intakeAlgae && isTargetL4Algae()) {
+    // FAST UP for algae L4 barge shot
+    activeProfile = new TrapezoidProfile(
+        new Constraints(
+            Constants.ALGAE_L4_MAX_VEL_ROT_PER_S,
+            Constants.ALGAE_L4_MAX_ACC_ROT_PER_S2
+        )
+    );
+
+} else if (goingDown) {
+    // We're lowering.
+
+    if (remainingDownIn <= CRAWL_WINDOW_IN) {
+        // final ~1.5 inches: crawl, super gentle landing
+        activeProfile = new TrapezoidProfile(
+            new Constraints(
+                CRAWL_MAX_VEL_ROT_PER_S,
+                CRAWL_MAX_ACC_ROT_PER_S2
+            )
+        );
+
+    } else if (remainingDownIn <= Constants.ELEVATOR_DOWN_SLOW_WINDOW_IN) {
+        // we're close, but not final-final -> slow profile from Constants
+        activeProfile = new TrapezoidProfile(
+            new Constraints(
+                Constants.ELEVATOR_DOWN_MAX_VEL_ROT_PER_S,
+                Constants.ELEVATOR_DOWN_MAX_ACC_ROT_PER_S2
+            )
+        );
+
+    } else {
+        // still high up: normal profile (keeps it responsive at the start of a drop)
+        activeProfile = PROFILE;
+    }
+
+} else {
+    // going up normally (not algae L4 fast raise)
+    activeProfile = PROFILE;
+}
+
+// advance profile by ~20ms
+State nextState = activeProfile.calculate(0.02, currentState, targetState);
+
+
+
         MOTOR_LEFT.setControl(
             CONTROL.withPosition(nextState.position)
                 .withFeedForward(FEED_CTRL
@@ -327,5 +473,4 @@ public final class Elevator extends AbstractSubsystem {
     public void stop() {
         setHeight(getHeight());
     }
-
 }

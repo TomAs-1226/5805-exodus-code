@@ -17,7 +17,7 @@ public final class CommandSystem {
 
     /**
      * debug levels for command system
-     * @author phalaena
+     * @author florpy
      */
     public enum DebugLevel {
         /** no debugs are printed */
